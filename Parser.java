@@ -43,17 +43,17 @@ class Parser extends Common
         makeSet(boldIntToken,
                 boldStringToken);
 
-    //The source object to handle errors.
+    //Used for handling errors.
     private Source source;
     
-    //The scanner object to read tokens from.
+    //Used for reading tokens in.
     private Scanner scanner;
     
-    //Symbol table used to keep track of definitions/scope.
+    //Used to keep track of definitions/scope.
     private SymbolTable symbolTable;
     
     //Define a basic string type for type checking.
-    private BasicType stringType = new BasicType("string", Type.wordSize, null);
+    private BasicType stringType = new BasicType("string", Type.addressSize, null);
     
     //Define a basic integer type for type checking.
     private BasicType intType =  new BasicType("int", Type.wordSize, null);
@@ -64,7 +64,7 @@ class Parser extends Common
     //Used to keep track of the current procedure type.
     private ProcedureType storedProcType = null;
     
-    //Parses the Source object src.
+    //Parses the source file found at srcPath.
     public Parser(String srcPath)
     {
         source = new Source(srcPath);
@@ -89,22 +89,22 @@ class Parser extends Common
         source.close();
     }
     
-    //Handles procedure declarations for pass one.
-    //Pass in a ProcedureType to add the declarations to.
+    //Pass in a ProcedureType to add the parameter declarations to.
+	//Handles procedure parameter declarations for pass one.
     private void passOneDeclaration(ProcedureType procedureType)
     {
         
         switch(scanner.getToken())
         {
             case boldIntToken: 
-                scanner.nextToken(); //Skip int token.
+                scanner.nextToken(); //Skip 'int' token.
                 nextExpected(nameToken);
                 
                 procedureType.addParameter(intType);
             break;
             
             case boldStringToken:
-                scanner.nextToken(); //Skip string token.
+                scanner.nextToken(); //Skip 'string' token.
                 nextExpected(nameToken);
                 
                 procedureType.addParameter(stringType);
@@ -112,7 +112,7 @@ class Parser extends Common
             
             case openBracketToken: 
                 
-                scanner.nextToken(); //Skip [ token.
+                scanner.nextToken(); //Skip '[' token.
                 nextExpected(intConstantToken);
                 
                 int length = scanner.getInt();
@@ -139,7 +139,7 @@ class Parser extends Common
             {
                 ProcedureType procedureType = new ProcedureType();
                 
-                scanner.nextToken(); //Skip proc token.
+                scanner.nextToken(); //Skip 'proc' token.
                 nextExpected(nameToken);
     
                 String procName = scanner.getString();
@@ -152,7 +152,7 @@ class Parser extends Common
                     
                     while(scanner.getToken() == commaToken)
                     {
-                        scanner.nextToken(); //Skip , token.
+                        scanner.nextToken(); //Skip ',' token.
                         
                         passOneDeclaration(procedureType);
                     }
@@ -182,8 +182,8 @@ class Parser extends Common
         }
     }
     
-    //Starts the parser.
-    //Parses program parts separated by ; tokens.
+    //Performs pass two of the compiler.
+    //Parses program parts separated by ';' tokens.
     //Makes sure the end of the program happens correctly.
     private void nextProgram()
     {
@@ -205,7 +205,7 @@ class Parser extends Common
         exit("nextProgram");
     }
     
-    //Parses a program part. Goes to a declaration.
+    //Parses a program part. Goes to a declaration or procedure.
     private void nextProgramPart()
     {
         enter("nextProgramPart");
@@ -228,7 +228,7 @@ class Parser extends Common
     }
     
     //Parses an expression.
-    //ex. [conjunction] or [conjunction]
+    //ex. <conjunction> or <conjunction>
     private Descriptor nextExpression()
     {
         Descriptor descriptor = null;
@@ -239,7 +239,7 @@ class Parser extends Common
         while(scanner.getToken() == boldOrToken)
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip or token.
+            scanner.nextToken(); //Skip 'or' token.
             descriptor = nextConjunction();
             check(descriptor, intType);
         }
@@ -249,7 +249,7 @@ class Parser extends Common
     }
     
     //Parses a conjunction.
-    //ex. [comparison] and [comparison]
+    //ex. <comparison> and <comparison>
     private Descriptor nextConjunction()
     {
         Descriptor descriptor = null;
@@ -260,7 +260,7 @@ class Parser extends Common
         while(scanner.getToken() == boldAndToken)
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip and token.
+            scanner.nextToken(); //Skip 'and' token.
             descriptor = nextComparison();
             check(descriptor, intType);
         }
@@ -270,7 +270,7 @@ class Parser extends Common
     }
     
     //Parses a comparison.
-    //ex. [sum] < [sum]
+    //ex. <sum> < <sum>
     private Descriptor nextComparison()
     {
         Descriptor descriptor = null;
@@ -291,7 +291,7 @@ class Parser extends Common
     }
     
     //Parses a sum.
-    //ex. [product] + [product] - [product]
+    //ex. <product> + <product> - <product>
     private Descriptor nextSum()
     {
         Descriptor descriptor = null;
@@ -301,7 +301,7 @@ class Parser extends Common
         while (tokenIsInSet(scanner.getToken(), SUM_SET))
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip + or - token.
+            scanner.nextToken(); //Skip '+' or '-' token.
             descriptor = nextProduct();
             check(descriptor, intType);
         }
@@ -311,7 +311,7 @@ class Parser extends Common
     }
     
     //Parses a product.
-    //ex. [term] * [term] / [term]
+    //ex. <term> * <term> / <term>
     private Descriptor nextProduct()
     {
         Descriptor descriptor = null;
@@ -321,7 +321,7 @@ class Parser extends Common
         while (tokenIsInSet(scanner.getToken(), PRODUCT_SET))
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip * or / token.
+            scanner.nextToken(); //Skip '*' or '/' token.
             descriptor = nextTerm();
             check(descriptor, intType);
             
@@ -332,7 +332,7 @@ class Parser extends Common
     }
     
     //Parses a term.
-    //ex. -[unit]
+    //ex. -<unit>
     private Descriptor nextTerm()
     {
         Descriptor descriptor = null;
@@ -350,19 +350,19 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses a call.
+    //Parses the argument list of a call.
     private Descriptor nextCall()
     {
         Descriptor descriptor = null;
         enter("nextCall");
         
         int arity = 0;
-        scanner.nextToken(); //Skip ( token.
+        scanner.nextToken(); //Skip '(' token.
         if (scanner.getToken() != closeParenToken)
         {
             arity++;
             if(storedProcType.getArity() < arity)
-                source.error("Invalid number of arguements.");
+                source.error("Invalid number of arguments.");
                 
             ProcedureType.Parameter param = storedProcType.getParameters();
             descriptor = nextExpression();
@@ -375,7 +375,7 @@ class Parser extends Common
                 
                 arity++;
                 if(storedProcType.getArity() < arity)
-                    source.error("Invalid number of arguements.");
+                    source.error("Invalid number of arguments.");
                     
                 descriptor = nextExpression();
                 param = param.getNext();
@@ -385,7 +385,7 @@ class Parser extends Common
         nextExpected(closeParenToken);
         
         if(storedProcType.getArity() != arity)
-            source.error("Invalid number of arguements.");
+            source.error("Invalid number of arguments.");
             
         exit("nextCall");
         return descriptor;
@@ -414,7 +414,7 @@ class Parser extends Common
                 break;
                 
             case openParenToken:
-                scanner.nextToken(); //Skip ( token.
+                scanner.nextToken(); //Skip '(' token.
                 
                 descriptor = nextExpression();
                 
@@ -436,11 +436,15 @@ class Parser extends Common
                         break;
                         
                     case openBracketToken:
-                        descriptor = symbolTable.getDescriptor(scanner.getString());
+					
+                        descriptor = 
+							symbolTable.getDescriptor(scanner.getString());
+						
                         if(! (descriptor.getType() instanceof ArrayType))
-                            source.error(scanner.getString() + " is not an array.");
+                            source.error(scanner.getString() + 
+								" is not an array.");
                             
-                        scanner.nextToken(); //Skip [ token.
+                        scanner.nextToken(); //Skip '[' token.
                         descriptor = nextExpression();
                         check(descriptor, intType);
                         
@@ -461,12 +465,14 @@ class Parser extends Common
     //Checks a procedure call and sets storedProcType.
     private void checkProcType()
     {
-        Descriptor descriptor = symbolTable.getDescriptor(scanner.getString());
+        Descriptor descriptor = 
+			symbolTable.getDescriptor(scanner.getString());
     
         ProcedureType procType = null;
     
         if(!(descriptor.getType() instanceof ProcedureType))
-            source.error(scanner.getString() + " is not a procedure.");
+            source.error(scanner.getString() + 
+				" is not a procedure.");
         else
         {
             procType = (ProcedureType)descriptor.getType();
@@ -495,11 +501,14 @@ class Parser extends Common
                         break;
                         
                     case openBracketToken:
-                        desc = symbolTable.getDescriptor(scanner.getString());
+					
+                        desc = 
+							symbolTable.getDescriptor(scanner.getString());
                         if(! (desc.getType() instanceof ArrayType))
-                            source.error(scanner.getString() + " is not an array.");
+                            source.error(scanner.getString() + 
+								" is not an array.");
                             
-                        scanner.nextToken(); //Skip [ token.
+                        scanner.nextToken(); //Skip '[' token.
                         desc = nextExpression();
                         check(desc, intType);
                         
@@ -515,7 +524,8 @@ class Parser extends Common
                         if(!desc.getType().isSubtype(intType) &&
                             !desc.getType().isSubtype(stringType))
                         {
-                            source.error("Only variables of type int or string may be assigned to.");
+                            source.error("Only variables of type int or" +
+								" string may be assigned to.");
                         }
                         nextExpected(colonEqualToken);
                         Descriptor expressionDesc = nextExpression();
@@ -544,6 +554,10 @@ class Parser extends Common
             case boldWhileToken:
                 nextWhile();
                 break;
+				
+			default:
+				source.error("Statement expected.");
+				break;
         }
         
         exit("nextStatement");
@@ -554,13 +568,13 @@ class Parser extends Common
     {
         enter("nextBegin");
         
-        scanner.nextToken(); //Skip begin token.
+        scanner.nextToken(); //Skip 'begin' token.
         if(scanner.getToken() != boldEndToken)
         {
             nextStatement();
             while (scanner.getToken() == semicolonToken)
             {
-                scanner.nextToken(); //Skip ; token.
+                scanner.nextToken(); //Skip ';' token.
                 nextStatement();
             }
         }
@@ -581,14 +595,14 @@ class Parser extends Common
     }
     
     //Parses an if statement.
-    //ex. if [expression] then [statement]
+    //ex. if <expression> then <statement>
     private void nextIf()
     {
         enter("nextIf");
         
         while(scanner.getToken() == boldIfToken)
         {
-            scanner.nextToken(); //Skip if token.
+            scanner.nextToken(); //Skip 'if' token.
         
             Descriptor desc = nextExpression();
             check(desc, intType);
@@ -598,7 +612,7 @@ class Parser extends Common
                
             if(scanner.getToken() == boldElseToken)
             {
-                scanner.nextToken(); //Skip else token.
+                scanner.nextToken(); //Skip 'else' token.
                 if (scanner.getToken() != boldIfToken)
                 {
                     nextStatement();
@@ -619,7 +633,7 @@ class Parser extends Common
     {
         enter("nextValue");
         
-        scanner.nextToken(); //Skip value token.
+        scanner.nextToken(); //Skip 'value' token.
         Descriptor desc = nextExpression();
         check(desc, storedValueType);
         
@@ -631,7 +645,7 @@ class Parser extends Common
     {
         enter("nextWhile");
         
-        scanner.nextToken(); //Skip while token.
+        scanner.nextToken(); //Skip 'while' token.
         Descriptor desc = nextExpression();
         check(desc, intType);
         
@@ -662,7 +676,7 @@ class Parser extends Common
     {
         enter("nextIntDeclaration");
         
-        scanner.nextToken(); //Skip int token.
+        scanner.nextToken(); //Skip 'int' token.
         
         Descriptor descriptor = new Descriptor(intType);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
@@ -677,7 +691,7 @@ class Parser extends Common
     {
         enter("nextStringDeclaration");
         
-        scanner.nextToken(); //Skip string token.
+        scanner.nextToken(); //Skip 'string' token.
         
         Descriptor descriptor = new Descriptor(stringType);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
@@ -692,7 +706,7 @@ class Parser extends Common
     {
         enter("nextArrayDeclaration");
         
-        scanner.nextToken(); //Skip [ token.
+        scanner.nextToken(); //Skip '[' token.
         nextExpected(intConstantToken);
         nextExpected(closeBracketToken);
         nextExpected(boldIntToken);
@@ -711,7 +725,7 @@ class Parser extends Common
         enter("nextProcedure");
         
         symbolTable.push();
-        scanner.nextToken(); //Skip proc token.
+        scanner.nextToken(); //Skip 'proc' token.
         nextExpected(nameToken);
         nextProcedureSignature();
         nextExpected(colonToken);
@@ -731,7 +745,7 @@ class Parser extends Common
             nextDeclaration();
             while(scanner.getToken() == semicolonToken)
             {
-                scanner.nextToken(); //Skip ; token.
+                scanner.nextToken(); //Skip ';' token.
                 nextDeclaration();
             }
         }
@@ -752,7 +766,7 @@ class Parser extends Common
             nextDeclaration();
             while(scanner.getToken() == commaToken)
             {
-                scanner.nextToken(); //Skip , token.
+                scanner.nextToken(); //Skip ',' token.
                 nextDeclaration();
             }
         }
@@ -772,7 +786,7 @@ class Parser extends Common
             break;
         }
 
-        scanner.nextToken(); //Skip value token.
+        scanner.nextToken(); //Skip 'value' token.
         
         exit("nextProcedureSignature");
     }
@@ -787,7 +801,7 @@ class Parser extends Common
             source.error(tokenToString(token) + " expected.");
     }
     
-    //Like nextExpected but we can specify a different error message.
+    //nextExpected but we can specify a different error message.
     private void nextExpected(int token, String comment)
     {
         if (scanner.getToken() == token)
@@ -796,7 +810,7 @@ class Parser extends Common
             source.error(comment);
     }
     
-    //Checks to see if descriptor is a subtype of type.
+    //Checks if descriptor's type has a subtype of type.
     private void check(Descriptor descriptor, Type type)
     { 
         if(!descriptor.getType().isSubtype(type))
@@ -811,13 +825,13 @@ class Parser extends Common
         Parser p = new Parser(args[0]);
     }
     
-    //Checks to see if a token is in a set represented by a bitstring.
+    //Checks if a token is in a set represented by a bitstring.
     private static boolean tokenIsInSet(int token, long set)
     {
         return (set & (1L << token)) != 0;
     }
     
-    //Returns a bitstring composed of the passed in arguements.
+    //Returns a bitstring composed of the passed in arguments.
     private static long makeSet(int... elements)
     {
         long set = 0L;

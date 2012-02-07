@@ -90,7 +90,7 @@ class Parser extends Common
     }
     
     //Pass in a ProcedureType to add the parameter declarations to.
-	//Handles procedure parameter declarations for pass one.
+    //Handles procedure parameter declarations for pass one.
     private void passOneDeclaration(ProcedureType procedureType)
     {
         
@@ -436,13 +436,13 @@ class Parser extends Common
                         break;
                         
                     case openBracketToken:
-					
+                    
                         descriptor = 
-							symbolTable.getDescriptor(scanner.getString());
-						
+                            symbolTable.getDescriptor(scanner.getString());
+                        
                         if(! (descriptor.getType() instanceof ArrayType))
                             source.error(scanner.getString() + 
-								" is not an array.");
+                                " is not an array.");
                             
                         scanner.nextToken(); //Skip '[' token.
                         descriptor = nextExpression();
@@ -466,13 +466,13 @@ class Parser extends Common
     private void checkProcType()
     {
         Descriptor descriptor = 
-			symbolTable.getDescriptor(scanner.getString());
+            symbolTable.getDescriptor(scanner.getString());
     
         ProcedureType procType = null;
     
         if(!(descriptor.getType() instanceof ProcedureType))
             source.error(scanner.getString() + 
-				" is not a procedure.");
+                " is not a procedure.");
         else
         {
             procType = (ProcedureType)descriptor.getType();
@@ -501,12 +501,12 @@ class Parser extends Common
                         break;
                         
                     case openBracketToken:
-					
+                    
                         desc = 
-							symbolTable.getDescriptor(scanner.getString());
+                            symbolTable.getDescriptor(scanner.getString());
                         if(! (desc.getType() instanceof ArrayType))
                             source.error(scanner.getString() + 
-								" is not an array.");
+                                " is not an array.");
                             
                         scanner.nextToken(); //Skip '[' token.
                         desc = nextExpression();
@@ -525,7 +525,7 @@ class Parser extends Common
                             !desc.getType().isSubtype(stringType))
                         {
                             source.error("Only variables of type int or" +
-								" string may be assigned to.");
+                                " string may be assigned to.");
                         }
                         nextExpected(colonEqualToken);
                         Descriptor expressionDesc = nextExpression();
@@ -554,10 +554,10 @@ class Parser extends Common
             case boldWhileToken:
                 nextWhile();
                 break;
-				
-			default:
-				source.error("Statement expected.");
-				break;
+                
+            default:
+                source.error("Statement expected.");
+                break;
         }
         
         exit("nextStatement");

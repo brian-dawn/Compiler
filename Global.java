@@ -60,6 +60,7 @@ class Global
 	{
 		assembler.emit(".data");
 		
+		//Iterate through the labelMap retrieving both key and value.
 		for (Map.Entry<String, Label> entry : labelMap.entrySet())
 		{
 			String string = entry.getKey();

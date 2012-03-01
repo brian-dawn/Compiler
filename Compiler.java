@@ -1,14 +1,13 @@
 /*
-Parser.java
+Compiler.java
 Brian Dawn 
-Latest Revision: December 11th, 2011.
-
-A recursive descent parser for SNARL.
+Latest Revision: February 29th, 2012.
 */
 
-class Parser extends Common
+// A recursive descent compiler for SNARL.
+class Compiler extends Common
 {
-    //Bitstring of all comparison tokens.
+    // Bitstring of all comparison tokens.
     private static final long COMPARISON_SET = 
         makeSet(lessToken, 
                 lessGreaterToken, 
@@ -17,55 +16,223 @@ class Parser extends Common
                 greaterToken, 
                 equalToken);
     
-    //Bitstring of + and - tokens.                         
+    // Bitstring of + and - tokens.                         
     private static final long SUM_SET = 
         makeSet(plusToken, 
                 dashToken);
                             
-    //Bitstring of * and / tokens.                    
+    // Bitstring of * and / tokens.                    
     private static final long PRODUCT_SET = 
         makeSet(slashToken,
                 starToken);
     
-    //Bitstring of not and - tokens.
+    // Bitstring of not and - tokens.
     private static final long TERM_SET = 
         makeSet(boldNotToken,
                 dashToken);
     
-    //Bitstring of int, string, and [ tokens.
+    // Bitstring of int, string, and [ tokens.
     private static final long DECLARATION_SET = 
         makeSet(boldIntToken,
                 boldStringToken,
                 openBracketToken);
     
-    //Bitstring of int and string tokens.                 
+    // Bitstring of int and string tokens.                 
     private static final long VALUE_SET = 
         makeSet(boldIntToken,
                 boldStringToken);
 
-    //Used for handling errors.
+    // Used for handling errors.
     private Source source;
     
-    //Used for reading tokens in.
+    // Used for reading tokens in.
     private Scanner scanner;
     
-    //Used to keep track of definitions/scope.
+    // Used to keep track of definitions/scope.
     private SymbolTable symbolTable;
     
-    //Define a basic string type for type checking.
+    // Assemble instructions to a MIPS assembly file.
+    private Assembler assembler;
+    
+    // Map strings and names to global labels.
+    private Global global;
+    
+    // Used to request and release registers.
+    private Allocator allocator;
+    
+    // Define a basic string type for type checking.
     private BasicType stringType = new BasicType("string", Type.addressSize, null);
     
-    //Define a basic integer type for type checking.
+    // Define a basic integer type for type checking.
     private BasicType intType =  new BasicType("int", Type.wordSize, null);
     
-    //Used to keep track of the value types of procedures.
+    // Used to keep track of the value types of procedures.
     private BasicType storedValueType = null;
     
-    //Used to keep track of the current procedure type.
+    // Used to keep track of the current procedure type.
     private ProcedureType storedProcType = null;
     
-    //Parses the source file found at srcPath.
-    public Parser(String srcPath)
+    // Describes a global array.
+    private class GlobalArrayDescriptor extends GlobalDescriptor
+    {
+        
+        private GlobalArrayDescriptor(Type type, Label label)
+        {
+            this.type = type;
+            this.label = label;
+        }
+        
+        // An array can't be on the left side of an assignment.
+        protected Allocator.Register lvalue()
+        {
+            source.error("Can't assign to array.");
+            return null;
+        }
+        
+        // Handle the right side of an assignment.
+        protected Allocator.Register rvalue()
+        {
+            Allocator.Register reg = allocator.request();
+            assembler.emit("la", reg, getLabel());
+            return reg;
+        }
+        
+        public String toString()
+        {
+            return "[GlobalArrayDescriptor " + type + " " + label + "]";
+        }
+    }
+    
+    // Describes a procedure.
+    private class GlobalProcedureDescriptor extends GlobalDescriptor
+    {
+
+        private GlobalProcedureDescriptor(Type type, Label label)
+        {
+            this.type = type;
+            this.label = label;
+        }
+
+        // A procedure can't be on the left side of an assignment.
+        protected Allocator.Register lvalue()
+        {
+            source.error("Can't assign to procedure.");  //  Your error message here.
+            return null;
+        }
+
+        // A procedure can't be used as a variable name.
+        protected Allocator.Register rvalue()
+        {
+            source.error("Can't store procedure into variable.");
+            return null;
+        }
+
+        public String toString()
+        {
+            return "[GlobalProcedureDescriptor " + type + " " + label + "]";
+        }
+    }
+
+    // Describe a global variable that's not an array.
+    private class GlobalVariableDescriptor extends GlobalDescriptor
+    {
+
+        private GlobalVariableDescriptor(Type type, Label label)
+        {
+            this.type = type;
+            this.label = label;
+        }
+
+        // Return a register that holds the global variable's address.
+        protected Allocator.Register lvalue()
+        {
+            Allocator.Register reg = allocator.request();
+            assembler.emit("la", reg, getLabel());
+            return reg;
+        }
+
+        // Return a register that holds the global variable's value.
+        protected Allocator.Register rvalue()
+        {
+            Allocator.Register reg = allocator.request();
+            assembler.emit("la", reg, getLabel());
+            assembler.emit("lw", reg, 0, reg);
+            return reg;
+        }
+
+        public String toString()
+        {
+            return "[GlobalVariableDescriptor " + type + " " + label + "]";
+        }
+    }
+
+    // Describe a local array variable.
+    private class LocalArrayDescriptor extends LocalDescriptor
+    {
+
+        private LocalArrayDescriptor(Type type, int offset)
+        {
+            this.type = type;
+            this.offset = offset;
+        }
+
+        // An array can't be alone on the left side of an assignment.
+        protected Allocator.Register lvalue()
+        {
+            source.error("Can't assign to array.");
+            return null;
+        }
+
+        // Return a register that holds the address of a local array variable.
+        protected Allocator.Register rvalue()
+        {
+            Allocator.Register reg = allocator.request();
+            assembler.emit("lw", reg, getOffset(), allocator.fp);
+            assembler.emit("addi", reg, allocator.fp, getOffset());
+            return reg;
+        }
+
+        public String toString()
+        {
+            return "[LocalArrayDescriptor " + type + " " + offset + "]";
+        }
+    }
+
+    // Describe a local variable that's not an array.
+    private class LocalVariableDescriptor extends LocalDescriptor
+    {
+
+        private LocalVariableDescriptor(Type type, int offset)
+        {
+            this.type = type;
+            this.offset = offset;
+        }
+
+        // Return a register that holds the address of the local variable.
+        protected Allocator.Register lvalue()
+        {
+            Allocator.Register reg = allocator.request();
+            assembler.emit("addi", reg, allocator.fp, getOffset());
+            return reg;
+        }
+
+        // Return a register that holds the value of the local variable.
+        protected Allocator.Register rvalue()
+        {
+            Allocator.Register reg = allocator.request();
+            assembler.emit("lw", reg, getOffset(), allocator.fp);
+            return reg;
+        }
+
+        public String toString()
+        {
+            return "[LocalVariableDescriptor " + type + " " + offset + "]";
+        }
+    }
+    
+    
+    // Parses the source file found at srcPath.
+    public Compiler(String srcPath)
     {
         source = new Source(srcPath);
         scanner = new Scanner(source);
@@ -73,38 +240,38 @@ class Parser extends Common
         symbolTable = new SymbolTable(source);
         symbolTable.push();
         
-        //Pass 1
+        // Pass 1
         passOne();
         
         source.close();
         
-        //Reset variables for 2nd pass.
+        // Reset variables for 2nd pass.
         source = new Source(srcPath);
         scanner = new Scanner(source);
         symbolTable.setSource(source);
         
-        //Pass 2
-        nextProgram();
+        // Pass 2
+        passTwo();
         
         source.close();
     }
     
-    //Pass in a ProcedureType to add the parameter declarations to.
-    //Handles procedure parameter declarations for pass one.
+    // Pass in a ProcedureType to add the parameter declarations to.
+    // Handles procedure parameter declarations for pass one.
     private void passOneDeclaration(ProcedureType procedureType)
     {
         
         switch(scanner.getToken())
         {
             case boldIntToken: 
-                scanner.nextToken(); //Skip 'int' token.
+                scanner.nextToken(); // Skip 'int' token.
                 nextExpected(nameToken);
                 
                 procedureType.addParameter(intType);
             break;
             
             case boldStringToken:
-                scanner.nextToken(); //Skip 'string' token.
+                scanner.nextToken(); // Skip 'string' token.
                 nextExpected(nameToken);
                 
                 procedureType.addParameter(stringType);
@@ -112,7 +279,7 @@ class Parser extends Common
             
             case openBracketToken: 
                 
-                scanner.nextToken(); //Skip '[' token.
+                scanner.nextToken(); // Skip '[' token.
                 nextExpected(intConstantToken);
                 
                 int length = scanner.getInt();
@@ -130,7 +297,7 @@ class Parser extends Common
         }   
     }
     
-    //Handles pass one of the parser.
+    // Handles pass one of the parser.
     private void passOne()
     {
         while(scanner.getToken() != endFileToken)
@@ -139,7 +306,7 @@ class Parser extends Common
             {
                 ProcedureType procedureType = new ProcedureType();
                 
-                scanner.nextToken(); //Skip 'proc' token.
+                scanner.nextToken(); // Skip 'proc' token.
                 nextExpected(nameToken);
     
                 String procName = scanner.getString();
@@ -152,7 +319,7 @@ class Parser extends Common
                     
                     while(scanner.getToken() == commaToken)
                     {
-                        scanner.nextToken(); //Skip ',' token.
+                        scanner.nextToken(); // Skip ',' token.
                         
                         passOneDeclaration(procedureType);
                     }
@@ -173,7 +340,7 @@ class Parser extends Common
                 }
                 
                 symbolTable.setDescriptor(procName, new Descriptor(procedureType));
-                scanner.nextToken(); //Skip value token.
+                scanner.nextToken(); // Skip value token.
             }
             else
             {
@@ -182,10 +349,10 @@ class Parser extends Common
         }
     }
     
-    //Performs pass two of the compiler.
-    //Parses program parts separated by ';' tokens.
-    //Makes sure the end of the program happens correctly.
-    private void nextProgram()
+    // Performs pass two of the compiler.
+    // Parses program parts separated by ';' tokens.
+    // Makes sure the end of the program happens correctly.
+    private void passTwo()
     {
         enter("nextProgram");
 
@@ -193,7 +360,7 @@ class Parser extends Common
         
         while(scanner.getToken() == semicolonToken)
         {
-            scanner.nextToken(); //Skip the ; token.
+            scanner.nextToken(); // Skip the ; token.
             nextProgramPart();
         }
         
@@ -205,7 +372,7 @@ class Parser extends Common
         exit("nextProgram");
     }
     
-    //Parses a program part. Goes to a declaration or procedure.
+    // Parses a program part. Goes to a declaration or procedure.
     private void nextProgramPart()
     {
         enter("nextProgramPart");
@@ -227,11 +394,11 @@ class Parser extends Common
         exit("nextProgramPart");
     }
     
-    //Parses an expression.
-    //ex. <conjunction> or <conjunction>
-    private Descriptor nextExpression()
+    // Parses an expression.
+    // ex. <conjunction> or <conjunction>
+    private RegisterDescriptor nextExpression()
     {
-        Descriptor descriptor = null;
+        RegisterDescriptor descriptor = null;
         enter("nextExpression");
 
         descriptor = nextConjunction();
@@ -239,7 +406,7 @@ class Parser extends Common
         while(scanner.getToken() == boldOrToken)
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip 'or' token.
+            scanner.nextToken(); // Skip 'or' token.
             descriptor = nextConjunction();
             check(descriptor, intType);
         }
@@ -248,11 +415,11 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses a conjunction.
-    //ex. <comparison> and <comparison>
-    private Descriptor nextConjunction()
+    // Parses a conjunction.
+    // ex. <comparison> and <comparison>
+    private RegisterDescriptor nextConjunction()
     {
-        Descriptor descriptor = null;
+        RegisterDescriptor descriptor = null;
         enter("nextConjunction");
 
         descriptor = nextComparison();
@@ -260,7 +427,7 @@ class Parser extends Common
         while(scanner.getToken() == boldAndToken)
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip 'and' token.
+            scanner.nextToken(); // Skip 'and' token.
             descriptor = nextComparison();
             check(descriptor, intType);
         }
@@ -269,11 +436,11 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses a comparison.
-    //ex. <sum> < <sum>
-    private Descriptor nextComparison()
+    // Parses a comparison.
+    // ex. <sum> < <sum>
+    private RegisterDescriptor nextComparison()
     {
-        Descriptor descriptor = null;
+        RegisterDescriptor descriptor = null;
         enter("nextComparison");
 
         descriptor = nextSum();
@@ -281,7 +448,7 @@ class Parser extends Common
         if (tokenIsInSet(scanner.getToken(), COMPARISON_SET))
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip comparison token.
+            scanner.nextToken(); // Skip comparison token.
             descriptor = nextSum();
             check(descriptor, intType);
         }
@@ -290,18 +457,18 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses a sum.
-    //ex. <product> + <product> - <product>
-    private Descriptor nextSum()
+    // Parses a sum.
+    // ex. <product> + <product> - <product>
+    private RegisterDescriptor nextSum()
     {
-        Descriptor descriptor = null;
+        RegisterDescriptor descriptor = null;
         enter("nextSum");
 
         descriptor = nextProduct();
         while (tokenIsInSet(scanner.getToken(), SUM_SET))
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip '+' or '-' token.
+            scanner.nextToken(); // Skip '+' or '-' token.
             descriptor = nextProduct();
             check(descriptor, intType);
         }
@@ -310,18 +477,18 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses a product.
-    //ex. <term> * <term> / <term>
-    private Descriptor nextProduct()
+    // Parses a product.
+    // ex. <term> * <term> / <term>
+    private RegisterDescriptor nextProduct()
     {
-        Descriptor descriptor = null;
+        RegisterDescriptor descriptor = null;
         enter("nextProduct");
 
         descriptor = nextTerm();
         while (tokenIsInSet(scanner.getToken(), PRODUCT_SET))
         {
             check(descriptor, intType);
-            scanner.nextToken(); //Skip '*' or '/' token.
+            scanner.nextToken(); // Skip '*' or '/' token.
             descriptor = nextTerm();
             check(descriptor, intType);
             
@@ -331,11 +498,11 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses a term.
-    //ex. -<unit>
-    private Descriptor nextTerm()
+    // Parses a term.
+    // ex. -<unit>
+    private RegisterDescriptor nextTerm()
     {
-        Descriptor descriptor = null;
+        RegisterDescriptor descriptor = null;
         enter("nextTerm");
         
         if (tokenIsInSet(scanner.getToken(), TERM_SET))
@@ -350,14 +517,14 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Parses the argument list of a call.
+    // Parses the argument list of a call.
     private Descriptor nextCall()
     {
         Descriptor descriptor = null;
         enter("nextCall");
         
         int arity = 0;
-        scanner.nextToken(); //Skip '(' token.
+        scanner.nextToken(); // Skip '(' token.
         if (scanner.getToken() != closeParenToken)
         {
             arity++;
@@ -388,33 +555,44 @@ class Parser extends Common
             source.error("Invalid number of arguments.");
             
         exit("nextCall");
-        return descriptor;
+        return new Descriptor(storedProcType.getValue());
     }
     
-    //Parses a unit.
-    private Descriptor nextUnit()
+    // Parses a unit.
+    private RegisterDescriptor nextUnit()
     {
-        Descriptor descriptor = null;
         enter("nextUnit");
+        RegisterDescriptor descriptor;
+        Allocator.Register reg;
         
         switch (scanner.getToken())
         {
             case intConstantToken: 
-                scanner.nextToken(); //Skip int constant token.
                 
-                descriptor = new Descriptor(intType);
+                reg = allocator.request();
+                assembler.emit("li", reg, scanner.getInt());
+                
+                scanner.nextToken(); // Skip int constant token.
+                
+                descriptor = new RegisterDescriptor(intType, reg);
                 
                 break;
                 
             case stringConstantToken:
-                scanner.nextToken(); //Skip string constant token.
                 
-                descriptor = new Descriptor(stringType);
+                
+                reg = allocator.request();
+                Label label = global.enterString(scanner.getString());
+                assembler.emit("la", reg, label);
+                
+                scanner.nextToken(); // Skip string constant token.
+                
+                descriptor = new RegisterDescriptor(stringType, reg);
                 
                 break;
                 
             case openParenToken:
-                scanner.nextToken(); //Skip '(' token.
+                scanner.nextToken(); // Skip '(' token.
                 
                 descriptor = nextExpression();
                 
@@ -444,7 +622,7 @@ class Parser extends Common
                             source.error(scanner.getString() + 
                                 " is not an array.");
                             
-                        scanner.nextToken(); //Skip '[' token.
+                        scanner.nextToken(); // Skip '[' token.
                         descriptor = nextExpression();
                         check(descriptor, intType);
                         
@@ -462,7 +640,7 @@ class Parser extends Common
         return descriptor;
     }
     
-    //Checks a procedure call and sets storedProcType.
+    // Checks a procedure call and sets storedProcType.
     private void checkProcType()
     {
         Descriptor descriptor = 
@@ -481,7 +659,7 @@ class Parser extends Common
         storedProcType = procType;  
     }
     
-    //Parses a statement.
+    // Parses a statement.
     private void nextStatement()
     {
         enter("nextStatement");
@@ -508,7 +686,7 @@ class Parser extends Common
                             source.error(scanner.getString() + 
                                 " is not an array.");
                             
-                        scanner.nextToken(); //Skip '[' token.
+                        scanner.nextToken(); // Skip '[' token.
                         desc = nextExpression();
                         check(desc, intType);
                         
@@ -563,18 +741,18 @@ class Parser extends Common
         exit("nextStatement");
     }
     
-    //Parses a begin statement.
+    // Parses a begin statement.
     private void nextBegin()
     {
         enter("nextBegin");
         
-        scanner.nextToken(); //Skip 'begin' token.
+        scanner.nextToken(); // Skip 'begin' token.
         if(scanner.getToken() != boldEndToken)
         {
             nextStatement();
             while (scanner.getToken() == semicolonToken)
             {
-                scanner.nextToken(); //Skip ';' token.
+                scanner.nextToken(); // Skip ';' token.
                 nextStatement();
             }
         }
@@ -583,26 +761,26 @@ class Parser extends Common
         exit("nextBegin");
     }
     
-    //Parses a code statement.
+    // Parses a code statement.
     private void nextCode()
     {
         enter("nextCode");
         
-        scanner.nextToken(); //Skip code token.
+        scanner.nextToken(); // Skip code token.
         nextExpected(stringConstantToken);
         
         exit("nextCode");
     }
     
-    //Parses an if statement.
-    //ex. if <expression> then <statement>
+    // Parses an if statement.
+    // ex. if <expression> then <statement>
     private void nextIf()
     {
         enter("nextIf");
         
         while(scanner.getToken() == boldIfToken)
         {
-            scanner.nextToken(); //Skip 'if' token.
+            scanner.nextToken(); // Skip 'if' token.
         
             Descriptor desc = nextExpression();
             check(desc, intType);
@@ -612,7 +790,7 @@ class Parser extends Common
                
             if(scanner.getToken() == boldElseToken)
             {
-                scanner.nextToken(); //Skip 'else' token.
+                scanner.nextToken(); // Skip 'else' token.
                 if (scanner.getToken() != boldIfToken)
                 {
                     nextStatement();
@@ -628,24 +806,24 @@ class Parser extends Common
         exit("nextIf");  
     }
     
-    //Parses a value statement.
+    // Parses a value statement.
     private void nextValue()
     {
         enter("nextValue");
         
-        scanner.nextToken(); //Skip 'value' token.
+        scanner.nextToken(); // Skip 'value' token.
         Descriptor desc = nextExpression();
         check(desc, storedValueType);
         
         exit("nextValue");
     }
     
-    //Parses a while statement.
+    // Parses a while statement.
     private void nextWhile()
     {
         enter("nextWhile");
         
-        scanner.nextToken(); //Skip 'while' token.
+        scanner.nextToken(); // Skip 'while' token.
         Descriptor desc = nextExpression();
         check(desc, intType);
         
@@ -655,7 +833,7 @@ class Parser extends Common
         exit("nextWhile");
     }
     
-    //Parses a declaration.
+    // Parses a declaration.
     private void nextDeclaration()
     {
         enter("nextDeclaration");
@@ -671,12 +849,12 @@ class Parser extends Common
         exit("nextDeclaration");
     }
     
-    //Parses an int declaration.
+    // Parses an int declaration.
     private void nextIntDeclaration()
     {
         enter("nextIntDeclaration");
         
-        scanner.nextToken(); //Skip 'int' token.
+        scanner.nextToken(); // Skip 'int' token.
         
         Descriptor descriptor = new Descriptor(intType);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
@@ -686,12 +864,12 @@ class Parser extends Common
         exit("nextIntDeclaration");
     }
     
-    //Parses a string declaration.
+    // Parses a string declaration.
     private void nextStringDeclaration()
     {
         enter("nextStringDeclaration");
         
-        scanner.nextToken(); //Skip 'string' token.
+        scanner.nextToken(); // Skip 'string' token.
         
         Descriptor descriptor = new Descriptor(stringType);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
@@ -701,12 +879,12 @@ class Parser extends Common
         exit("nextStringDeclaration");
     }
     
-    //Parses an array declaration.
+    // Parses an array declaration.
     private void nextArrayDeclaration()
     {
         enter("nextArrayDeclaration");
         
-        scanner.nextToken(); //Skip '[' token.
+        scanner.nextToken(); // Skip '[' token.
         nextExpected(intConstantToken);
         nextExpected(closeBracketToken);
         nextExpected(boldIntToken);
@@ -719,13 +897,13 @@ class Parser extends Common
         exit("nextArrayDeclaration");
     }
     
-    //Parses an entire procedure.
+    // Parses an entire procedure.
     private void nextProcedure()
     {
         enter("nextProcedure");
         
         symbolTable.push();
-        scanner.nextToken(); //Skip 'proc' token.
+        scanner.nextToken(); // Skip 'proc' token.
         nextExpected(nameToken);
         nextProcedureSignature();
         nextExpected(colonToken);
@@ -735,7 +913,7 @@ class Parser extends Common
         exit("nextProcedure");
     }
     
-    //Parses the body of a procedure.
+    // Parses the body of a procedure.
     private void nextProcedureBody()
     {
         enter("nextProcedureBody");
@@ -745,7 +923,7 @@ class Parser extends Common
             nextDeclaration();
             while(scanner.getToken() == semicolonToken)
             {
-                scanner.nextToken(); //Skip ';' token.
+                scanner.nextToken(); // Skip ';' token.
                 nextDeclaration();
             }
         }
@@ -755,7 +933,7 @@ class Parser extends Common
         exit("nextProcedureBody");
     }
     
-    //Parses the signature part of a procedure.
+    // Parses the signature part of a procedure.
     private void nextProcedureSignature()
     {
         enter("nextProcedureSignature");
@@ -766,7 +944,7 @@ class Parser extends Common
             nextDeclaration();
             while(scanner.getToken() == commaToken)
             {
-                scanner.nextToken(); //Skip ',' token.
+                scanner.nextToken(); // Skip ',' token.
                 nextDeclaration();
             }
         }
@@ -786,13 +964,13 @@ class Parser extends Common
             break;
         }
 
-        scanner.nextToken(); //Skip 'value' token.
+        scanner.nextToken(); // Skip 'value' token.
         
         exit("nextProcedureSignature");
     }
     
-    //Scans for the given token, if it doesn't appear we give
-    //a generic error message. If it is present we consume it.
+    // Scans for the given token, if it doesn't appear we give
+    // a generic error message. If it is present we consume it.
     private void nextExpected(int token)
     {
         if (scanner.getToken() == token)
@@ -801,7 +979,7 @@ class Parser extends Common
             source.error(tokenToString(token) + " expected.");
     }
     
-    //nextExpected but we can specify a different error message.
+    // nextExpected but we can specify a different error message.
     private void nextExpected(int token, String comment)
     {
         if (scanner.getToken() == token)
@@ -810,7 +988,7 @@ class Parser extends Common
             source.error(comment);
     }
     
-    //Checks if descriptor's type has a subtype of type.
+    // Checks if descriptor's type has a subtype of type.
     private void check(Descriptor descriptor, Type type)
     { 
         if(!descriptor.getType().isSubtype(type))
@@ -819,19 +997,19 @@ class Parser extends Common
         }
     }
          
-    //Run some test code.
+    // Run some test code.
     public static void main(String[] args)
     {
-        Parser p = new Parser(args[0]);
+        Compiler p = new Compiler(args[0]);
     }
     
-    //Checks if a token is in a set represented by a bitstring.
+    // Checks if a token is in a set represented by a bitstring.
     private static boolean tokenIsInSet(int token, long set)
     {
         return (set & (1L << token)) != 0;
     }
     
-    //Returns a bitstring composed of the passed in arguments.
+    // Returns a bitstring composed of the passed in arguments.
     private static long makeSet(int... elements)
     {
         long set = 0L;

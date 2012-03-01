@@ -1,7 +1,11 @@
 /*
 Compiler.java
 Brian Dawn 
-Latest Revision: February 29th, 2012.
+Latest Revision: March 1st, 2012.
+Notes:
+ * This code currently compiles.
+ * I was unsure how to handle descriptors for nextCall.
+ * I think I may have done the nextIntDeclaration/nextStringDeclaration/etc.. correctly.
 */
 
 // A recursive descent compiler for SNARL.
@@ -72,6 +76,9 @@ class Compiler extends Common
     // Used to keep track of the current procedure type.
     private ProcedureType storedProcType = null;
     
+    // Offset for declared local variables.
+    private int offset = 0;
+    
     // Describes a global array.
     private class GlobalArrayDescriptor extends GlobalDescriptor
     {
@@ -116,7 +123,7 @@ class Compiler extends Common
         // A procedure can't be on the left side of an assignment.
         protected Allocator.Register lvalue()
         {
-            source.error("Can't assign to procedure.");  //  Your error message here.
+            source.error("Can't assign to procedure.");
             return null;
         }
 
@@ -339,7 +346,8 @@ class Compiler extends Common
                     break;
                 }
                 
-                symbolTable.setDescriptor(procName, new Descriptor(procedureType));
+                symbolTable.setDescriptor(procName, 
+                        new GlobalProcedureDescriptor(procedureType, new Label("proc")));
                 scanner.nextToken(); // Skip value token.
             }
             else
@@ -518,7 +526,8 @@ class Compiler extends Common
     }
     
     // Parses the argument list of a call.
-    private Descriptor nextCall()
+    // TODO: unsure how to fix descriptors for this method.
+    private NameDescriptor nextCall()
     {
         Descriptor descriptor = null;
         enter("nextCall");
@@ -555,15 +564,19 @@ class Compiler extends Common
             source.error("Invalid number of arguments.");
             
         exit("nextCall");
-        return new Descriptor(storedProcType.getValue());
+        // return new NameDescriptor(storedProcType.getValue());
+        return null;
     }
     
     // Parses a unit.
     private RegisterDescriptor nextUnit()
     {
         enter("nextUnit");
-        RegisterDescriptor descriptor;
-        Allocator.Register reg;
+        
+        // Initialize to null just so the compiler stops complaining it might
+        // not have been initialized.
+        RegisterDescriptor descriptor = null;
+        Allocator.Register reg = null;
         
         switch (scanner.getToken())
         {
@@ -602,7 +615,8 @@ class Compiler extends Common
             case nameToken:
                 nextExpected(nameToken);
                 
-                descriptor = symbolTable.getDescriptor(scanner.getString());
+                NameDescriptor nameDes = symbolTable.getDescriptor(scanner.getString());
+                descriptor = new RegisterDescriptor(nameDes.getType(), nameDes.rvalue());
                 
                 switch (scanner.getToken())
                 {
@@ -610,12 +624,12 @@ class Compiler extends Common
 
                         checkProcType();
                         
-                        descriptor = nextCall();
+                        nameDes = nextCall();
                         break;
                         
                     case openBracketToken:
                     
-                        descriptor = 
+                        nameDes = 
                             symbolTable.getDescriptor(scanner.getString());
                         
                         if(! (descriptor.getType() instanceof ArrayType))
@@ -856,8 +870,9 @@ class Compiler extends Common
         
         scanner.nextToken(); // Skip 'int' token.
         
-        Descriptor descriptor = new Descriptor(intType);
+        LocalVariableDescriptor descriptor = new LocalVariableDescriptor(intType, offset);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
+        offset -= intType.getSize();
         
         nextExpected(nameToken);
         
@@ -871,8 +886,9 @@ class Compiler extends Common
         
         scanner.nextToken(); // Skip 'string' token.
         
-        Descriptor descriptor = new Descriptor(stringType);
+        LocalVariableDescriptor descriptor = new LocalVariableDescriptor(stringType, offset);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
+        offset -= stringType.getSize();
         
         nextExpected(nameToken);
         
@@ -891,8 +907,9 @@ class Compiler extends Common
         nextExpected(nameToken);
         
         ArrayType arrayType = new ArrayType(scanner.getInt(), intType);
-        Descriptor descriptor = new Descriptor(arrayType);
+        LocalArrayDescriptor descriptor = new LocalArrayDescriptor(arrayType, offset);
         symbolTable.setDescriptor(scanner.getString(), descriptor);
+        offset -= arrayType.getSize();
         
         exit("nextArrayDeclaration");
     }

@@ -194,7 +194,6 @@ class Compiler extends Common
         protected Allocator.Register rvalue()
         {
             Allocator.Register reg = allocator.request();
-            assembler.emit("lw", reg, getOffset(), allocator.fp);
             assembler.emit("addi", reg, allocator.fp, getOffset());
             return reg;
         }
@@ -243,6 +242,9 @@ class Compiler extends Common
     {
         source = new Source(srcPath);
         scanner = new Scanner(source);
+
+        assembler = new Assembler("out.asm");
+        global = new Global(assembler);
         
         symbolTable = new SymbolTable(source);
         symbolTable.push();
@@ -345,9 +347,11 @@ class Compiler extends Common
                         procedureType.addValue(stringType);
                     break;
                 }
-                
-                symbolTable.setDescriptor(procName, 
-                        new GlobalProcedureDescriptor(procedureType, new Label("proc")));
+
+                Label label = global.enterString(procName);
+                GlobalProcedureDescriptor descriptor = new GlobalProcedureDescriptor(procedureType, label);
+                symbolTable.setDescriptor(procName, descriptor);
+
                 scanner.nextToken(); // Skip value token.
             }
             else
@@ -390,7 +394,7 @@ class Compiler extends Common
             case boldIntToken:
             case boldStringToken:
             case openBracketToken:
-                nextDeclaration();
+                nextDeclaration(true);
                 break;
             case boldProcToken: 
                 nextProcedure();
@@ -527,7 +531,7 @@ class Compiler extends Common
     
     // Parses the argument list of a call.
     // TODO: unsure how to fix descriptors for this method.
-    private NameDescriptor nextCall()
+    private RegisterDescriptor nextCall()
     {
         Descriptor descriptor = null;
         enter("nextCall");
@@ -624,7 +628,7 @@ class Compiler extends Common
 
                         checkProcType();
                         
-                        nameDes = nextCall();
+                        //nameDes = nextCall();
                         break;
                         
                     case openBracketToken:
@@ -847,15 +851,15 @@ class Compiler extends Common
         exit("nextWhile");
     }
     
-    // Parses a declaration.
-    private void nextDeclaration()
+    // Parses a local declaration.
+    private void nextDeclaration(boolean isGlobal)
     {
         enter("nextDeclaration");
         switch(scanner.getToken())
         {
-            case boldIntToken: nextIntDeclaration(); break;
-            case boldStringToken: nextStringDeclaration(); break;
-            case openBracketToken: nextArrayDeclaration(); break;
+            case boldIntToken: nextIntDeclaration(isGlobal); break;
+            case boldStringToken: nextStringDeclaration(isGlobal); break;
+            case openBracketToken: nextArrayDeclaration(isGlobal); break;
             default:
                 source.error("Declaration expected.");
                 break;
@@ -864,15 +868,24 @@ class Compiler extends Common
     }
     
     // Parses an int declaration.
-    private void nextIntDeclaration()
+    private void nextIntDeclaration(boolean isGlobal)
     {
         enter("nextIntDeclaration");
         
         scanner.nextToken(); // Skip 'int' token.
         
-        LocalVariableDescriptor descriptor = new LocalVariableDescriptor(intType, offset);
-        symbolTable.setDescriptor(scanner.getString(), descriptor);
-        offset -= intType.getSize();
+        if (isGlobal)
+        {
+            Label label = global.enterVariable(intType);
+            GlobalVariableDescriptor descriptor = new GlobalVariableDescriptor(intType, label);
+            symbolTable.setDescriptor(scanner.getString(), descriptor);
+        }
+        else
+        {
+            LocalVariableDescriptor descriptor = new LocalVariableDescriptor(intType, offset);
+            symbolTable.setDescriptor(scanner.getString(), descriptor);
+            offset -= intType.getSize();
+        }
         
         nextExpected(nameToken);
         
@@ -880,23 +893,31 @@ class Compiler extends Common
     }
     
     // Parses a string declaration.
-    private void nextStringDeclaration()
+    private void nextStringDeclaration(boolean isGlobal)
     {
         enter("nextStringDeclaration");
         
         scanner.nextToken(); // Skip 'string' token.
         
-        LocalVariableDescriptor descriptor = new LocalVariableDescriptor(stringType, offset);
-        symbolTable.setDescriptor(scanner.getString(), descriptor);
-        offset -= stringType.getSize();
-        
+        if (isGlobal)
+        {
+            Label label = global.enterString(scanner.getString());
+            GlobalVariableDescriptor descriptor = new GlobalVariableDescriptor(stringType, label);
+            symbolTable.setDescriptor(scanner.getString(), descriptor);
+        }
+        else
+        {
+            LocalVariableDescriptor descriptor = new LocalVariableDescriptor(stringType, offset);
+            symbolTable.setDescriptor(scanner.getString(), descriptor);
+            offset -= stringType.getSize();
+        }
         nextExpected(nameToken);
         
         exit("nextStringDeclaration");
     }
     
     // Parses an array declaration.
-    private void nextArrayDeclaration()
+    private void nextArrayDeclaration(boolean isGlobal)
     {
         enter("nextArrayDeclaration");
         
@@ -907,45 +928,103 @@ class Compiler extends Common
         nextExpected(nameToken);
         
         ArrayType arrayType = new ArrayType(scanner.getInt(), intType);
-        LocalArrayDescriptor descriptor = new LocalArrayDescriptor(arrayType, offset);
-        symbolTable.setDescriptor(scanner.getString(), descriptor);
-        offset -= arrayType.getSize();
+
+        if (isGlobal)
+        {
+            Label label = global.enterVariable(arrayType);
+            GlobalArrayDescriptor descriptor = new GlobalArrayDescriptor(arrayType, label);
+            symbolTable.setDescriptor(scanner.getString(), descriptor);
+        }
+        else
+        {
+            LocalArrayDescriptor descriptor = new LocalArrayDescriptor(arrayType, offset);
+            symbolTable.setDescriptor(scanner.getString(), descriptor);
+            offset -= arrayType.getSize();
+        }
         
         exit("nextArrayDeclaration");
     }
     
+    private void emitProcedurePrelude(int localSizeSum, int arity)
+    {
+        assembler.emit("addi", allocator.sp, allocator.sp, -(40 + localSizeSum));
+
+        assembler.emit("sw", allocator.ra, 40, allocator.sp);
+        assembler.emit("sw", allocator.fp, 36, allocator.sp);
+
+        for(int i = 0; i<8; i++)
+        {
+            int offset = 32 - i * 4;
+            String emit = "sw $s" + i + ", " + offset + "($sp)";
+            assembler.emit(emit);
+        }
+
+        assembler.emit("addi", allocator.fp, allocator.sp, (40 + localSizeSum + 4 * arity));
+    }
+
+    private void emitProcedurePostlude(int localSizeSum, int arity)
+    {
+        assembler.emit("lw", allocator.ra, 40, allocator.sp);
+        assembler.emit("lw", allocator.fp, 36, allocator.sp);
+
+        for(int i = 0; i<8; i++)
+        {
+            int offset = 32 - i * 4;
+            String emit = "lw $s" + i + ", " + offset + "($sp)";
+            assembler.emit(emit);
+        }
+
+        assembler.emit("addi", allocator.sp, allocator.sp, (40 + localSizeSum + 4 * arity));
+        assembler.emit("jr $ra");
+    }
+
     // Parses an entire procedure.
     private void nextProcedure()
     {
         enter("nextProcedure");
         
         symbolTable.push();
+        offset = 0; // TODO: Determine if this is correct.
         scanner.nextToken(); // Skip 'proc' token.
         nextExpected(nameToken);
+        
+        // Get the label of the procedure from the symbol table.
+        String procName = scanner.getString();
+        GlobalProcedureDescriptor descriptor = 
+            (GlobalProcedureDescriptor)symbolTable.getDescriptor(procName);
+
         nextProcedureSignature();
         nextExpected(colonToken);
-        nextProcedureBody();
+        nextProcedureBody(descriptor);
         symbolTable.pop();
         
         exit("nextProcedure");
     }
     
     // Parses the body of a procedure.
-    private void nextProcedureBody()
+    private void nextProcedureBody(GlobalProcedureDescriptor descriptor)
     {
         enter("nextProcedureBody");
         
+        int oldOffset = offset;
         if(tokenIsInSet(scanner.getToken(), DECLARATION_SET))
         {
-            nextDeclaration();
+            nextDeclaration(false);
             while(scanner.getToken() == semicolonToken)
             {
                 scanner.nextToken(); // Skip ';' token.
-                nextDeclaration();
+                nextDeclaration(false);
             }
         }
-        
+
+        // TODO: Does this need to account for parameters as well? Assumes no.
+        int localSizeSum = oldOffset - offset; // Calculate local(p).
+        int arity = ((ProcedureType)descriptor.getType()).getArity();
+        emitProcedurePrelude(localSizeSum, arity);
+
         nextBegin();
+
+        emitProcedurePostlude(localSizeSum, arity);
             
         exit("nextProcedureBody");
     }
@@ -958,11 +1037,11 @@ class Compiler extends Common
         nextExpected(openParenToken);
         if(tokenIsInSet(scanner.getToken(), DECLARATION_SET))
         {
-            nextDeclaration();
+            nextDeclaration(false);
             while(scanner.getToken() == commaToken)
             {
                 scanner.nextToken(); // Skip ',' token.
-                nextDeclaration();
+                nextDeclaration(false);
             }
         }
         
@@ -1017,7 +1096,7 @@ class Compiler extends Common
     // Run some test code.
     public static void main(String[] args)
     {
-        Compiler p = new Compiler(args[0]);
+        Compiler p = new Compiler("example.snarl");
     }
     
     // Checks if a token is in a set represented by a bitstring.

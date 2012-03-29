@@ -19,11 +19,13 @@ class Source extends Common
   private int            lineIndex;  //  Index of current character in LINE.
   private String         path;       //  Pathname of source file.
   private BufferedReader reader;     //  Read source characters from here.
+  private Assembler      assembler;  //  Used for debugging.
 
 //  Constructor. Return a new SOURCE, positioned at its first character.
 
-  public Source(String path)
+  public Source(String path, Assembler assembler)
   {
+    this.assembler = assembler;
     try
     {
       lineCount = 0;
@@ -60,6 +62,7 @@ class Source extends Common
 
   public void error(String message)
   {
+    assembler.close();
     int power = 10000;
     int temp  = lineCount;
     for (int count = 1; count <= 5; count += 1)
@@ -130,7 +133,7 @@ class Source extends Common
 
   public static void main(String[] files)
   {
-    Source source = new Source(files[0]);
+    Source source = new Source(files[0], null);
     while (source.getChar() != eofChar)
     {
       while (! source.atLineEnd())

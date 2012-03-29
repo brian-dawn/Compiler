@@ -1,11 +1,7 @@
 /*
 Compiler.java
 Brian Dawn 
-Latest Revision: March 1st, 2012.
-Notes:
- * This code currently compiles.
- * I was unsure how to handle descriptors for nextCall.
- * I think I may have done the nextIntDeclaration/nextStringDeclaration/etc.. correctly.
+Latest Revision: March 29th, 2012.
 */
 
 // A recursive descent compiler for SNARL.
@@ -240,11 +236,13 @@ class Compiler extends Common
     // Parses the source file found at srcPath.
     public Compiler(String srcPath)
     {
-        source = new Source(srcPath);
+        assembler = new Assembler("out.asm");
+
+        source = new Source(srcPath, assembler);
         scanner = new Scanner(source);
 
-        assembler = new Assembler("out.asm");
         global = new Global(assembler);
+        allocator = new Allocator(source);
         
         symbolTable = new SymbolTable(source);
         symbolTable.push();
@@ -255,7 +253,7 @@ class Compiler extends Common
         source.close();
         
         // Reset variables for 2nd pass.
-        source = new Source(srcPath);
+        source = new Source(srcPath, assembler);
         scanner = new Scanner(source);
         symbolTable.setSource(source);
         
@@ -820,7 +818,7 @@ class Compiler extends Common
                 break;
             }
         }
-        
+
         exit("nextIf");  
     }
     
@@ -945,8 +943,10 @@ class Compiler extends Common
         exit("nextArrayDeclaration");
     }
     
+    // Emits code for a procedure prelude.
     private void emitProcedurePrelude(int localSizeSum, int arity)
     {
+        assembler.emit("# Begin procedure prelude.");
         assembler.emit("addi", allocator.sp, allocator.sp, -(40 + localSizeSum));
 
         assembler.emit("sw", allocator.ra, 40, allocator.sp);
@@ -960,10 +960,13 @@ class Compiler extends Common
         }
 
         assembler.emit("addi", allocator.fp, allocator.sp, (40 + localSizeSum + 4 * arity));
+        assembler.emit("# End procedure prelude.");
     }
 
+    // Emits code for a procedure postlude.
     private void emitProcedurePostlude(int localSizeSum, int arity)
     {
+        assembler.emit("# Begin procedure postlude.");
         assembler.emit("lw", allocator.ra, 40, allocator.sp);
         assembler.emit("lw", allocator.fp, 36, allocator.sp);
 
@@ -976,6 +979,7 @@ class Compiler extends Common
 
         assembler.emit("addi", allocator.sp, allocator.sp, (40 + localSizeSum + 4 * arity));
         assembler.emit("jr $ra");
+        assembler.emit("# End procedure postlude.");
     }
 
     // Parses an entire procedure.
@@ -984,7 +988,7 @@ class Compiler extends Common
         enter("nextProcedure");
         
         symbolTable.push();
-        offset = 0; // TODO: Determine if this is correct.
+        offset = 0; // Set the global offset to 0 for the new procedure.
         scanner.nextToken(); // Skip 'proc' token.
         nextExpected(nameToken);
         
@@ -993,6 +997,7 @@ class Compiler extends Common
         GlobalProcedureDescriptor descriptor = 
             (GlobalProcedureDescriptor)symbolTable.getDescriptor(procName);
 
+        assembler.emit("# Procedure " + procName + ".");
         nextProcedureSignature();
         nextExpected(colonToken);
         nextProcedureBody(descriptor);
@@ -1006,6 +1011,7 @@ class Compiler extends Common
     {
         enter("nextProcedureBody");
         
+        // At this point offset contains the parameters.
         int oldOffset = offset;
         if(tokenIsInSet(scanner.getToken(), DECLARATION_SET))
         {
@@ -1016,13 +1022,14 @@ class Compiler extends Common
                 nextDeclaration(false);
             }
         }
-
-        // TODO: Does this need to account for parameters as well? Assumes no.
+        // At this point offset contains both the locals and the parameters.
         int localSizeSum = oldOffset - offset; // Calculate local(p).
         int arity = ((ProcedureType)descriptor.getType()).getArity();
         emitProcedurePrelude(localSizeSum, arity);
 
+        assembler.emit("# Begin procedure body.");
         nextBegin();
+        assembler.emit("# End procedure body.");
 
         emitProcedurePostlude(localSizeSum, arity);
             
@@ -1084,7 +1091,7 @@ class Compiler extends Common
             source.error(comment);
     }
     
-    // Checks if descriptor's type has a subtype of type.
+    // Checks if descriptor's type is a subtype of type.
     private void check(Descriptor descriptor, Type type)
     { 
         if(!descriptor.getType().isSubtype(type))
@@ -1096,7 +1103,7 @@ class Compiler extends Common
     // Run some test code.
     public static void main(String[] args)
     {
-        Compiler p = new Compiler(args[0]);
+        Compiler p = new Compiler("example.snarl");
     }
     
     // Checks if a token is in a set represented by a bitstring.

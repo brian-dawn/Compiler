@@ -1096,7 +1096,7 @@ class Compiler extends Common
     // Run some test code.
     public static void main(String[] args)
     {
-        Compiler p = new Compiler("example.snarl");
+        Compiler p = new Compiler(args[0]);
     }
     
     // Checks if a token is in a set represented by a bitstring.

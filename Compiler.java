@@ -346,7 +346,7 @@ class Compiler extends Common
                     break;
                 }
 
-                Label label = global.enterString(procName);
+                Label label = new Label(procName);
                 GlobalProcedureDescriptor descriptor = new GlobalProcedureDescriptor(procedureType, label);
                 symbolTable.setDescriptor(procName, descriptor);
 

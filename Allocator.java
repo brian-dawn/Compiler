@@ -89,7 +89,7 @@ public class Allocator
     //Testing.
     public static void main(String[] args)
     {
-        Source source = new Source(args[0]);
+        Source source = new Source(args[0], null);
 
         Allocator allocator = new Allocator(source);
         
@@ -98,12 +98,13 @@ public class Allocator
         
         //The s7 register.
         Register r = allocator.request();
+        System.out.println(r);
         
         allocator.release(r);
         System.out.println(allocator.request());
         allocator.release(r);
         //allocator.release(r); Uncomment this and get an exception.
         allocator.request();
-        allocator.request();
+        //allocator.request();
     }
 }

@@ -62,7 +62,8 @@ class Source extends Common
 
   public void error(String message)
   {
-    assembler.close();
+    if (assembler != null)
+      assembler.close();
     int power = 10000;
     int temp  = lineCount;
     for (int count = 1; count <= 5; count += 1)

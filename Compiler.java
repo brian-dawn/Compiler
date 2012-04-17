@@ -1,7 +1,8 @@
 /*
 Compiler.java
-Brian Dawn 
-Latest Revision: March 29th, 2012.
+Author: Brian Dawn 
+Collaborated with: Paul Martinek
+Latest Revision: April 16th, 2012.
 */
 
 // A recursive descent compiler for SNARL.
@@ -69,11 +70,7 @@ class Compiler extends Common
     // Used to keep track of the value types of procedures.
     private BasicType storedValueType = null;
     
-    // Used to keep track of the current procedure type.
-    private ProcedureType storedProcType = null;
     
-    // Offset for declared local variables.
-    private int offset = 0;
     
     // Describes a global array.
     private class GlobalArrayDescriptor extends GlobalDescriptor
@@ -392,7 +389,7 @@ class Compiler extends Common
             case boldIntToken:
             case boldStringToken:
             case openBracketToken:
-                nextDeclaration(true);
+                nextGlobalDeclaration();
                 break;
             case boldProcToken: 
                 nextProcedure();
@@ -408,104 +405,168 @@ class Compiler extends Common
     // ex. <conjunction> or <conjunction>
     private RegisterDescriptor nextExpression()
     {
-        RegisterDescriptor descriptor = null;
+
         enter("nextExpression");
 
-        descriptor = nextConjunction();
-        
+        RegisterDescriptor left = nextConjunction();
+        Label label = new Label("expression");
+
+        assembler.emit("sne", left.getRegister(), left.getRegister(), allocator.zero);
+        assembler.emit("bne", left.getRegister(), allocator.zero, label);
+
         while(scanner.getToken() == boldOrToken)
         {
-            check(descriptor, intType);
+            check(left, intType);
+
             scanner.nextToken(); // Skip 'or' token.
-            descriptor = nextConjunction();
-            check(descriptor, intType);
+            RegisterDescriptor des = nextConjunction();
+            check(des, intType);
+
+            assembler.emit("sne", left.getRegister(), des.getRegister(), allocator.zero);
+            assembler.emit("bne", left.getRegister(), allocator.zero, label);
+            allocator.release(des.getRegister());
         }
+
+        assembler.emit(label);
         
         exit("nextExpression");
-        return descriptor;
+        return left;
     }
     
     // Parses a conjunction.
     // ex. <comparison> and <comparison>
     private RegisterDescriptor nextConjunction()
     {
-        RegisterDescriptor descriptor = null;
         enter("nextConjunction");
 
-        descriptor = nextComparison();
+        RegisterDescriptor left = nextComparison();
+        Label label = new Label("conjunction");
+
+        assembler.emit("sne", left.getRegister(), left.getRegister(), allocator.zero);
+        assembler.emit("beq", left.getRegister(), allocator.zero, label);
         
         while(scanner.getToken() == boldAndToken)
         {
-            check(descriptor, intType);
+            check(left, intType);
+
             scanner.nextToken(); // Skip 'and' token.
-            descriptor = nextComparison();
-            check(descriptor, intType);
+            RegisterDescriptor des = nextComparison();
+            check(des, intType);
+
+            assembler.emit("sne", left.getRegister(), des.getRegister(), allocator.zero);
+            assembler.emit("beq", left.getRegister(), allocator.zero, label);
+            allocator.release(des.getRegister());
         }
         
+        assembler.emit(label);
+
         exit("nextConjunction");
-        return descriptor;
+        return left;
     }
     
     // Parses a comparison.
     // ex. <sum> < <sum>
     private RegisterDescriptor nextComparison()
     {
-        RegisterDescriptor descriptor = null;
         enter("nextComparison");
-
-        descriptor = nextSum();
         
-        if (tokenIsInSet(scanner.getToken(), COMPARISON_SET))
+        RegisterDescriptor left = nextSum();
+        
+        int comparisonToken = scanner.getToken();
+        if (tokenIsInSet(comparisonToken, COMPARISON_SET))
         {
-            check(descriptor, intType);
+            check(left, intType);
+
             scanner.nextToken(); // Skip comparison token.
-            descriptor = nextSum();
-            check(descriptor, intType);
+
+            RegisterDescriptor right = nextSum();
+            check(right, intType);
+            assembler.emit("# Comparison.");
+            switch(comparisonToken)
+            {
+                case lessToken: // left < right
+                    assembler.emit("slt", left.getRegister(), left.getRegister(), right.getRegister());
+                    break;
+                case lessEqualToken: // left <= right
+                    assembler.emit("sle", left.getRegister(), left.getRegister(), right.getRegister());
+                    break;
+                case greaterToken: // left > right
+                    assembler.emit("sgt", right.getRegister(), right.getRegister(), left.getRegister());
+                    break;
+                case greaterEqualToken: // left >= right
+                    assembler.emit("sge", left.getRegister(), left.getRegister(), right.getRegister());
+                    break;
+                case lessGreaterToken: // left <> right
+                    assembler.emit("sne", left.getRegister(), left.getRegister(), right.getRegister());
+                    break;
+                case equalToken: // left = right
+                    assembler.emit("seq", left.getRegister(), left.getRegister(), right.getRegister());
+                    break;
+            }
+            allocator.release(right.getRegister());
         }
         
         exit("nextComparison");
-        return descriptor;
+        return left;
     }
     
     // Parses a sum.
     // ex. <product> + <product> - <product>
     private RegisterDescriptor nextSum()
     {
-        RegisterDescriptor descriptor = null;
         enter("nextSum");
 
-        descriptor = nextProduct();
+        RegisterDescriptor left = nextProduct();
+
+        
         while (tokenIsInSet(scanner.getToken(), SUM_SET))
         {
-            check(descriptor, intType);
+            check(left, intType);
+            int sumToken = scanner.getToken();
             scanner.nextToken(); // Skip '+' or '-' token.
-            descriptor = nextProduct();
-            check(descriptor, intType);
+            RegisterDescriptor right = nextProduct();
+            check(right, intType);
+            assembler.emit("# Sum.");
+            if( sumToken == plusToken)
+                assembler.emit("add", left.getRegister(), left.getRegister(), right.getRegister());
+            else
+                assembler.emit("sub", left.getRegister(), left.getRegister(), right.getRegister());
+
+            allocator.release(right.getRegister());
         }
         
         exit("nextSum");
-        return descriptor;
+        return left;
     }
     
     // Parses a product.
     // ex. <term> * <term> / <term>
     private RegisterDescriptor nextProduct()
     {
-        RegisterDescriptor descriptor = null;
+
         enter("nextProduct");
 
-        descriptor = nextTerm();
+        RegisterDescriptor left = nextTerm();
         while (tokenIsInSet(scanner.getToken(), PRODUCT_SET))
         {
-            check(descriptor, intType);
+            check(left, intType);
+            int productToken = scanner.getToken();
             scanner.nextToken(); // Skip '*' or '/' token.
-            descriptor = nextTerm();
-            check(descriptor, intType);
+
+            RegisterDescriptor right = nextTerm();
+            check(right, intType);
+            assembler.emit("# Product.");
+            if( productToken == starToken)
+                assembler.emit("mul", left.getRegister(), left.getRegister(), right.getRegister());
+            else
+                assembler.emit("div", left.getRegister(), left.getRegister(), right.getRegister());
+
+            allocator.release(right.getRegister());            
             
         }
         
         exit("nextProduct");
-        return descriptor;
+        return left;
     }
     
     // Parses a term.
@@ -515,10 +576,17 @@ class Compiler extends Common
         RegisterDescriptor descriptor = null;
         enter("nextTerm");
         
-        if (tokenIsInSet(scanner.getToken(), TERM_SET))
+        int termToken = scanner.getToken();
+        if (tokenIsInSet(termToken, TERM_SET))
         {
+            scanner.nextToken();
             descriptor = nextTerm();
             check(descriptor, intType);
+            assembler.emit("# Term.");
+            if (termToken == boldNotToken)
+                assembler.emit("seq", descriptor.getRegister(), allocator.zero, descriptor.getRegister());
+            else
+                assembler.emit("sub", descriptor.getRegister(), allocator.zero, descriptor.getRegister());
         }
         else
             descriptor = nextUnit();
@@ -528,55 +596,79 @@ class Compiler extends Common
     }
     
     // Parses the argument list of a call.
-    // TODO: unsure how to fix descriptors for this method.
     private RegisterDescriptor nextCall()
     {
-        Descriptor descriptor = null;
         enter("nextCall");
         
+        // Retrieve the ProcedureType from the symbolTable.
+        Descriptor descriptor = symbolTable.getDescriptor(scanner.getString());
+        ProcedureType type = null;
+        
+        if(descriptor.getType() instanceof ProcedureType)
+            type = (ProcedureType)descriptor.getType();
+        else
+            source.error(scanner.getString() + " is not a procedure.");
+
+        // Has to be a GlobalProcedureDescriptor at this point.
+        GlobalProcedureDescriptor procedureDescriptor = (GlobalProcedureDescriptor) descriptor;
+
         int arity = 0;
         scanner.nextToken(); // Skip '(' token.
         if (scanner.getToken() != closeParenToken)
         {
             arity++;
-            if(storedProcType.getArity() < arity)
+            if(type.getArity() < arity)
                 source.error("Invalid number of arguments.");
                 
-            ProcedureType.Parameter param = storedProcType.getParameters();
-            descriptor = nextExpression();
-            check(descriptor, param.getType());
+            ProcedureType.Parameter param = type.getParameters();
+            RegisterDescriptor regdes = nextExpression();
+            check(regdes, param.getType());
             
-            
+            // Compile code for first expression in call.
+            assembler.emit("# Call.");
+            assembler.emit("sw", regdes.getRegister(), 0, allocator.sp);
+            assembler.emit("addi", allocator.sp, allocator.sp, -4);
+            allocator.release(regdes.getRegister());
+
             while (scanner.getToken() == commaToken)
             {
                 nextExpected(commaToken, ", or ) expected.");
                 
                 arity++;
-                if(storedProcType.getArity() < arity)
+                if(type.getArity() < arity)
                     source.error("Invalid number of arguments.");
                     
-                descriptor = nextExpression();
+                regdes = nextExpression();
                 param = param.getNext();
-                check(descriptor, param.getType());
+                check(regdes, param.getType());
+
+                // Compile code for E sub k.
+                assembler.emit("sw", regdes.getRegister(), 0, allocator.sp);
+                assembler.emit("addi", allocator.sp, allocator.sp, -4);
+                allocator.release(regdes.getRegister());
             }
         }
         nextExpected(closeParenToken);
         
-        if(storedProcType.getArity() != arity)
+        if(type.getArity() != arity)
             source.error("Invalid number of arguments.");
-            
+        
+        // Compile code for jump.
+        Allocator.Register reg = allocator.request();
+        assembler.emit("jal", procedureDescriptor.getLabel());
+        assembler.emit("move", reg, allocator.v0);
+
         exit("nextCall");
-        // return new NameDescriptor(storedProcType.getValue());
-        return null;
+        
+        return new RegisterDescriptor(type.getValue(), reg);
     }
-    
+
+
     // Parses a unit.
     private RegisterDescriptor nextUnit()
     {
         enter("nextUnit");
         
-        // Initialize to null just so the compiler stops complaining it might
-        // not have been initialized.
         RegisterDescriptor descriptor = null;
         Allocator.Register reg = null;
         
@@ -617,23 +709,23 @@ class Compiler extends Common
             case nameToken:
                 nextExpected(nameToken);
                 
-                NameDescriptor nameDes = symbolTable.getDescriptor(scanner.getString());
-                descriptor = new RegisterDescriptor(nameDes.getType(), nameDes.rvalue());
-                
                 switch (scanner.getToken())
                 {
                     case openParenToken:
-
-                        checkProcType();
-                        
-                        //nameDes = nextCall();
+                    {
+                        descriptor = nextCall();
                         break;
+                    }
                         
                     case openBracketToken:
-                    
+                    {
+                        NameDescriptor nameDes = symbolTable.getDescriptor(scanner.getString());
+                        descriptor = new RegisterDescriptor(nameDes.getType(), nameDes.rvalue());
+
                         nameDes = 
                             symbolTable.getDescriptor(scanner.getString());
-                        
+                        reg = nameDes.rvalue();
+
                         if(! (descriptor.getType() instanceof ArrayType))
                             source.error(scanner.getString() + 
                                 " is not an array.");
@@ -641,9 +733,25 @@ class Compiler extends Common
                         scanner.nextToken(); // Skip '[' token.
                         descriptor = nextExpression();
                         check(descriptor, intType);
-                        
+
                         nextExpected(closeBracketToken);
+
+                        assembler.emit("sll", descriptor.getRegister(), descriptor.getRegister(), 2);
+                        assembler.emit("add", reg, reg, descriptor.getRegister());
+                        assembler.emit("lw", reg, 0, reg);
+                        
+                        allocator.release(descriptor.getRegister());
+                        
+
+                        descriptor = new RegisterDescriptor(intType, reg);
                         break;
+                    }
+                    default:
+                    {
+                        NameDescriptor nameDes = symbolTable.getDescriptor(scanner.getString());
+                        descriptor = new RegisterDescriptor(nameDes.getType(), nameDes.rvalue());
+                        break;
+                    }
                 }
                 
                 break;
@@ -651,28 +759,10 @@ class Compiler extends Common
                 source.error("Unit expected.");
                 break;
         }
-        
+
         exit("nextUnit");
+
         return descriptor;
-    }
-    
-    // Checks a procedure call and sets storedProcType.
-    private void checkProcType()
-    {
-        Descriptor descriptor = 
-            symbolTable.getDescriptor(scanner.getString());
-    
-        ProcedureType procType = null;
-    
-        if(!(descriptor.getType() instanceof ProcedureType))
-            source.error(scanner.getString() + 
-                " is not a procedure.");
-        else
-        {
-            procType = (ProcedureType)descriptor.getType();
-        }
-    
-        storedProcType = procType;  
     }
     
     // Parses a statement.
@@ -689,8 +779,7 @@ class Compiler extends Common
                 switch (scanner.getToken())
                 {
                     case openParenToken:
-                        checkProcType();
-                    
+                   
                         nextCall();
                         break;
                         
@@ -849,105 +938,125 @@ class Compiler extends Common
         exit("nextWhile");
     }
     
-    // Parses a local declaration.
-    private void nextDeclaration(boolean isGlobal)
+    // Parses a global declaration.
+    private void nextGlobalDeclaration()
     {
-        enter("nextDeclaration");
+        enter("nextGlobalDeclaration");
         switch(scanner.getToken())
         {
-            case boldIntToken: nextIntDeclaration(isGlobal); break;
-            case boldStringToken: nextStringDeclaration(isGlobal); break;
-            case openBracketToken: nextArrayDeclaration(isGlobal); break;
-            default:
-                source.error("Declaration expected.");
-                break;
-        }    
-        exit("nextDeclaration");
-    }
-    
-    // Parses an int declaration.
-    private void nextIntDeclaration(boolean isGlobal)
-    {
-        enter("nextIntDeclaration");
-        
-        scanner.nextToken(); // Skip 'int' token.
-        
-        if (isGlobal)
-        {
-            Label label = global.enterVariable(intType);
-            GlobalVariableDescriptor descriptor = new GlobalVariableDescriptor(intType, label);
-            symbolTable.setDescriptor(scanner.getString(), descriptor);
-        }
-        else
-        {
-            LocalVariableDescriptor descriptor = new LocalVariableDescriptor(intType, offset);
-            symbolTable.setDescriptor(scanner.getString(), descriptor);
-            offset -= intType.getSize();
-        }
-        
-        nextExpected(nameToken);
-        
-        exit("nextIntDeclaration");
-    }
-    
-    // Parses a string declaration.
-    private void nextStringDeclaration(boolean isGlobal)
-    {
-        enter("nextStringDeclaration");
-        
-        scanner.nextToken(); // Skip 'string' token.
-        
-        if (isGlobal)
-        {
-            Label label = global.enterString(scanner.getString());
-            GlobalVariableDescriptor descriptor = new GlobalVariableDescriptor(stringType, label);
-            symbolTable.setDescriptor(scanner.getString(), descriptor);
-        }
-        else
-        {
-            LocalVariableDescriptor descriptor = new LocalVariableDescriptor(stringType, offset);
-            symbolTable.setDescriptor(scanner.getString(), descriptor);
-            offset -= stringType.getSize();
-        }
-        nextExpected(nameToken);
-        
-        exit("nextStringDeclaration");
-    }
-    
-    // Parses an array declaration.
-    private void nextArrayDeclaration(boolean isGlobal)
-    {
-        enter("nextArrayDeclaration");
-        
-        scanner.nextToken(); // Skip '[' token.
-        nextExpected(intConstantToken);
-        nextExpected(closeBracketToken);
-        nextExpected(boldIntToken);
-        nextExpected(nameToken);
-        
-        ArrayType arrayType = new ArrayType(scanner.getInt(), intType);
+            case boldIntToken:
+            {
+                scanner.nextToken(); // Skip 'int' token.
 
-        if (isGlobal)
-        {
-            Label label = global.enterVariable(arrayType);
-            GlobalArrayDescriptor descriptor = new GlobalArrayDescriptor(arrayType, label);
-            symbolTable.setDescriptor(scanner.getString(), descriptor);
+                Label label = global.enterVariable(intType);
+                GlobalVariableDescriptor descriptor = new GlobalVariableDescriptor(intType, label);
+                symbolTable.setDescriptor(scanner.getString(), descriptor);   
+
+                break;
+            }
+            case boldStringToken:
+            {
+                scanner.nextToken(); // Skip 'string' token.
+
+                Label label = global.enterVariable(stringType);
+                GlobalVariableDescriptor descriptor = new GlobalVariableDescriptor(stringType, label);
+                symbolTable.setDescriptor(scanner.getString(), descriptor);
+
+                break;
+            }
+            case openBracketToken:
+            {
+                scanner.nextToken(); // Skip '[' token.
+
+                nextExpected(intConstantToken);
+                nextExpected(closeBracketToken);
+                nextExpected(boldIntToken);
+                
+
+                ArrayType arrayType = new ArrayType(scanner.getInt(), intType);
+
+                Label label = global.enterVariable(arrayType);
+                GlobalArrayDescriptor descriptor = new GlobalArrayDescriptor(arrayType, label);
+                symbolTable.setDescriptor(scanner.getString(), descriptor);
+
+                break;
+            }
+            default:
+                source.error("Global Declaration expected.");
+                break;
         }
-        else
-        {
-            LocalArrayDescriptor descriptor = new LocalArrayDescriptor(arrayType, offset);
-            symbolTable.setDescriptor(scanner.getString(), descriptor);
-            offset -= arrayType.getSize();
-        }
-        
-        exit("nextArrayDeclaration");
+        nextExpected(nameToken); 
+        exit("nextGlobalDeclaration");
     }
+
+    // Parses a local declaration and returns a negative offset.
+    private int nextLocalDeclaration(int offset, boolean isParameter)
+    {
+        enter("nextLocalDeclaration");
+
+        switch(scanner.getToken())
+        {
+            case boldIntToken:
+            {
+                scanner.nextToken(); // Skip 'int' token.
+                LocalVariableDescriptor descriptor = new LocalVariableDescriptor(intType, offset);
+                symbolTable.setDescriptor(scanner.getString(), descriptor);
+                if (isParameter)
+                    offset -= 4;
+                else
+                    offset -= intType.getSize();
+
+                break;
+            }
+            case boldStringToken:
+            {
+                scanner.nextToken(); // Skip 'string' token.
+
+                LocalVariableDescriptor descriptor = new LocalVariableDescriptor(stringType, offset);
+                symbolTable.setDescriptor(scanner.getString(), descriptor);
+                if (isParameter)
+                    offset -= 4;
+                else
+                    offset -= stringType.getSize();
+
+                break;
+            }
+            case openBracketToken:
+            {
+                scanner.nextToken(); // Skip '[' token.
+
+                nextExpected(intConstantToken);
+                nextExpected(closeBracketToken);
+                nextExpected(boldIntToken);
+                
+
+                ArrayType arrayType = new ArrayType(scanner.getInt(), intType);
+
+                LocalArrayDescriptor descriptor = new LocalArrayDescriptor(arrayType, offset);
+                symbolTable.setDescriptor(scanner.getString(), descriptor);
+                if (isParameter)
+                    offset -= 4;
+                else
+                    offset -= arrayType.getSize();
+                
+                break;
+            }
+            default:
+                source.error("Local Declaration expected.");
+                break;
+        }
+
+        nextExpected(nameToken); 
+        exit("nextLocalDeclaration");
+        return offset;
+    }
+
     
     // Emits code for a procedure prelude.
-    private void emitProcedurePrelude(int localSizeSum, int arity)
+    private void emitProcedurePrelude(int localOffset, int arity)
     {
         assembler.emit("# Begin procedure prelude.");
-        assembler.emit("addi", allocator.sp, allocator.sp, -(40 + localSizeSum));
+        assembler.emit("addi", allocator.sp, allocator.sp, -(40 - localOffset));
 
         assembler.emit("sw", allocator.ra, 40, allocator.sp);
         assembler.emit("sw", allocator.fp, 36, allocator.sp);
@@ -959,12 +1068,12 @@ class Compiler extends Common
             assembler.emit(emit);
         }
 
-        assembler.emit("addi", allocator.fp, allocator.sp, (40 + localSizeSum + 4 * arity));
+        assembler.emit("addi", allocator.fp, allocator.sp, (40 - localOffset + 4 * arity));
         assembler.emit("# End procedure prelude.");
     }
 
     // Emits code for a procedure postlude.
-    private void emitProcedurePostlude(int localSizeSum, int arity)
+    private void emitProcedurePostlude(int localOffset, int arity)
     {
         assembler.emit("# Begin procedure postlude.");
         assembler.emit("lw", allocator.ra, 40, allocator.sp);
@@ -977,7 +1086,7 @@ class Compiler extends Common
             assembler.emit(emit);
         }
 
-        assembler.emit("addi", allocator.sp, allocator.sp, (40 + localSizeSum + 4 * arity));
+        assembler.emit("addi", allocator.sp, allocator.sp, (40 - localOffset + 4 * arity));
         assembler.emit("jr $ra");
         assembler.emit("# End procedure postlude.");
     }
@@ -988,17 +1097,20 @@ class Compiler extends Common
         enter("nextProcedure");
         
         symbolTable.push();
-        offset = 0; // Set the global offset to 0 for the new procedure.
         scanner.nextToken(); // Skip 'proc' token.
         nextExpected(nameToken);
         
         // Get the label of the procedure from the symbol table.
+        // Emit the descriptors label.
         String procName = scanner.getString();
         GlobalProcedureDescriptor descriptor = 
             (GlobalProcedureDescriptor)symbolTable.getDescriptor(procName);
 
         assembler.emit("# Procedure " + procName + ".");
-        nextProcedureSignature();
+        assembler.emit(descriptor.getLabel());
+
+        int parameterOffset = nextProcedureSignature(); // TODO: not sure why we need this parameter offset.
+
         nextExpected(colonToken);
         nextProcedureBody(descriptor);
         symbolTable.pop();
@@ -1011,44 +1123,47 @@ class Compiler extends Common
     {
         enter("nextProcedureBody");
         
-        // At this point offset contains the parameters.
-        int oldOffset = offset;
+        int localOffset = 0;
+
         if(tokenIsInSet(scanner.getToken(), DECLARATION_SET))
         {
-            nextDeclaration(false);
+            localOffset = nextLocalDeclaration(localOffset, false);
             while(scanner.getToken() == semicolonToken)
             {
                 scanner.nextToken(); // Skip ';' token.
-                nextDeclaration(false);
+                localOffset = nextLocalDeclaration(localOffset, false);
             }
         }
-        // At this point offset contains both the locals and the parameters.
-        int localSizeSum = oldOffset - offset; // Calculate local(p).
+
         int arity = ((ProcedureType)descriptor.getType()).getArity();
-        emitProcedurePrelude(localSizeSum, arity);
+        emitProcedurePrelude(localOffset, arity);
 
         assembler.emit("# Begin procedure body.");
         nextBegin();
         assembler.emit("# End procedure body.");
 
-        emitProcedurePostlude(localSizeSum, arity);
+        emitProcedurePostlude(localOffset, arity);
             
         exit("nextProcedureBody");
     }
     
     // Parses the signature part of a procedure.
-    private void nextProcedureSignature()
+    // Return the offset of the parameters, each parameter
+    // is 1 word, or 4 bytes.
+    private int nextProcedureSignature()
     {
         enter("nextProcedureSignature");
         
+        int parameterOffset = 0;
+
         nextExpected(openParenToken);
         if(tokenIsInSet(scanner.getToken(), DECLARATION_SET))
         {
-            nextDeclaration(false);
+            parameterOffset = nextLocalDeclaration(parameterOffset, true);
             while(scanner.getToken() == commaToken)
             {
                 scanner.nextToken(); // Skip ',' token.
-                nextDeclaration(false);
+                parameterOffset = nextLocalDeclaration(parameterOffset, true);
             }
         }
         
@@ -1070,6 +1185,7 @@ class Compiler extends Common
         scanner.nextToken(); // Skip 'value' token.
         
         exit("nextProcedureSignature");
+        return parameterOffset;
     }
     
     // Scans for the given token, if it doesn't appear we give

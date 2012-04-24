@@ -2,7 +2,7 @@
 Compiler.java
 Author: Brian Dawn 
 Collaborated with: Paul Martinek
-Latest Revision: April 16th, 2012.
+Latest Revision: April 23rd, 2012.
 */
 
 // A recursive descent compiler for SNARL.
@@ -376,6 +376,7 @@ class Compiler extends Common
             source.error("End of program expected.");
         }
 
+        assembler.close();
         exit("nextProgram");
     }
     
@@ -411,23 +412,28 @@ class Compiler extends Common
         RegisterDescriptor left = nextConjunction();
         Label label = new Label("expression");
 
-        assembler.emit("sne", left.getRegister(), left.getRegister(), allocator.zero);
-        assembler.emit("bne", left.getRegister(), allocator.zero, label);
-
+        boolean found = false;
+        if(scanner.getToken() == boldOrToken)
+        {
+            found = true;
+            assembler.emit("sne", left.getRegister(), left.getRegister(), allocator.zero);
+        }
         while(scanner.getToken() == boldOrToken)
         {
             check(left, intType);
+
+            assembler.emit("bne", left.getRegister(), allocator.zero, label);
 
             scanner.nextToken(); // Skip 'or' token.
             RegisterDescriptor des = nextConjunction();
             check(des, intType);
 
             assembler.emit("sne", left.getRegister(), des.getRegister(), allocator.zero);
-            assembler.emit("bne", left.getRegister(), allocator.zero, label);
+            
             allocator.release(des.getRegister());
         }
-
-        assembler.emit(label);
+        if (found)
+            assembler.emit(label);
         
         exit("nextExpression");
         return left;
@@ -442,23 +448,27 @@ class Compiler extends Common
         RegisterDescriptor left = nextComparison();
         Label label = new Label("conjunction");
 
-        assembler.emit("sne", left.getRegister(), left.getRegister(), allocator.zero);
-        assembler.emit("beq", left.getRegister(), allocator.zero, label);
-        
+        boolean found = false;
+        if(scanner.getToken() == boldAndToken)
+        {
+            found = true;
+            assembler.emit("sne", left.getRegister(), left.getRegister(), allocator.zero);
+        }
         while(scanner.getToken() == boldAndToken)
         {
             check(left, intType);
+
+            assembler.emit("beq", left.getRegister(), allocator.zero, label);
 
             scanner.nextToken(); // Skip 'and' token.
             RegisterDescriptor des = nextComparison();
             check(des, intType);
 
             assembler.emit("sne", left.getRegister(), des.getRegister(), allocator.zero);
-            assembler.emit("beq", left.getRegister(), allocator.zero, label);
             allocator.release(des.getRegister());
         }
-        
-        assembler.emit(label);
+        if (found)
+            assembler.emit(label);
 
         exit("nextConjunction");
         return left;
@@ -569,33 +579,7 @@ class Compiler extends Common
         return left;
     }
     
-    // Parses a term.
-    // ex. -<unit>
-    private RegisterDescriptor nextTerm()
-    {
-        RegisterDescriptor descriptor = null;
-        enter("nextTerm");
-        
-        int termToken = scanner.getToken();
-        if (tokenIsInSet(termToken, TERM_SET))
-        {
-            scanner.nextToken();
-            descriptor = nextTerm();
-            check(descriptor, intType);
-            assembler.emit("# Term.");
-            if (termToken == boldNotToken)
-                assembler.emit("seq", descriptor.getRegister(), allocator.zero, descriptor.getRegister());
-            else
-                assembler.emit("sub", descriptor.getRegister(), allocator.zero, descriptor.getRegister());
-        }
-        else
-            descriptor = nextUnit();
-        
-        exit("nextTerm");
-        return descriptor;
-    }
-    
-    // Parses the argument list of a call.
+    // Handles a call.
     private RegisterDescriptor nextCall()
     {
         enter("nextCall");
@@ -663,6 +647,37 @@ class Compiler extends Common
         return new RegisterDescriptor(type.getValue(), reg);
     }
 
+    // Parses a term.
+    // ex. -<unit>
+    private RegisterDescriptor nextTerm()
+    {
+        RegisterDescriptor descriptor = null;
+        enter("nextTerm");
+        
+        int termToken = scanner.getToken();
+        if (tokenIsInSet(termToken, TERM_SET))
+        {
+            scanner.nextToken();
+            descriptor = nextTerm();
+            check(descriptor, intType);
+
+            boolean isConstant = scanner.getToken() == intConstantToken;
+            if (termToken == boldNotToken)
+            {
+
+                assembler.emit("seq", descriptor.getRegister(), allocator.zero, descriptor.getRegister());
+            }
+            else
+            {
+                assembler.emit("sub", descriptor.getRegister(), allocator.zero, descriptor.getRegister());
+            }
+        }
+        else
+            descriptor = nextUnit();
+        
+        exit("nextTerm");
+        return descriptor;
+    }
 
     // Parses a unit.
     private RegisterDescriptor nextUnit()
@@ -720,11 +735,9 @@ class Compiler extends Common
                     case openBracketToken:
                     {
                         NameDescriptor nameDes = symbolTable.getDescriptor(scanner.getString());
-                        descriptor = new RegisterDescriptor(nameDes.getType(), nameDes.rvalue());
-
-                        nameDes = 
-                            symbolTable.getDescriptor(scanner.getString());
                         reg = nameDes.rvalue();
+
+                        descriptor = new RegisterDescriptor(nameDes.getType(), reg);
 
                         if(! (descriptor.getType() instanceof ArrayType))
                             source.error(scanner.getString() + 
@@ -770,7 +783,7 @@ class Compiler extends Common
     {
         enter("nextStatement");
         
-        Descriptor desc;
+
         switch (scanner.getToken())
         {
             case nameToken:
@@ -779,30 +792,42 @@ class Compiler extends Common
                 switch (scanner.getToken())
                 {
                     case openParenToken:
-                   
-                        nextCall();
+                    {
+                        RegisterDescriptor desc = nextCall();
+                        allocator.release(desc.getRegister());
                         break;
-                        
+                    }   
                     case openBracketToken:
-                    
-                        desc = 
-                            symbolTable.getDescriptor(scanner.getString());
+                    {
+                        NameDescriptor desc = symbolTable.getDescriptor(scanner.getString());
                         if(! (desc.getType() instanceof ArrayType))
                             source.error(scanner.getString() + 
                                 " is not an array.");
                             
                         scanner.nextToken(); // Skip '[' token.
-                        desc = nextExpression();
-                        check(desc, intType);
-                        
+                        RegisterDescriptor descE1 = nextExpression();
+                        check(descE1, intType);
+
                         nextExpected(closeBracketToken);
                         nextExpected(colonEqualToken);
-                        desc = nextExpression();
-                        check(desc, intType);
+
+                        RegisterDescriptor descE2 = nextExpression();
+                        check(descE2, intType);
+
+                        Allocator.Register reg = desc.rvalue();
+                        assembler.emit("sll", descE1.getRegister(), descE1.getRegister(), 2);
+                        assembler.emit("add", reg, reg, descE1.getRegister());
+                        assembler.emit("sw", descE2.getRegister(), 0, reg);
+
+                        allocator.release(reg);
+                        allocator.release(descE1.getRegister());
+                        allocator.release(descE2.getRegister());
+
                         break;
-                        
+                    }
                     default:
-                        desc = symbolTable.getDescriptor(scanner.getString());
+                    {
+                        NameDescriptor desc = symbolTable.getDescriptor(scanner.getString());
                         
                         if(!desc.getType().isSubtype(intType) &&
                             !desc.getType().isSubtype(stringType))
@@ -810,11 +835,20 @@ class Compiler extends Common
                             source.error("Only variables of type int or" +
                                 " string may be assigned to.");
                         }
+
                         nextExpected(colonEqualToken);
-                        Descriptor expressionDesc = nextExpression();
-                        check(desc, expressionDesc.getType());
-                        
+
+
+                        RegisterDescriptor expressionDesc = nextExpression();
+                        check(expressionDesc, expressionDesc.getType());
+                        allocator.release(expressionDesc.getRegister());
+
+                        Allocator.Register reg = desc.lvalue();
+                        assembler.emit("sw", expressionDesc.getRegister(), reg);
+                        allocator.release(reg);
+
                         break;
+                    }
                 }
                 break;
                 
@@ -873,6 +907,7 @@ class Compiler extends Common
         
         scanner.nextToken(); // Skip code token.
         nextExpected(stringConstantToken);
+        assembler.emit(scanner.getString());
         
         exit("nextCode");
     }
@@ -883,30 +918,44 @@ class Compiler extends Common
     {
         enter("nextIf");
         
+        Label label = new Label("if");
         while(scanner.getToken() == boldIfToken)
         {
             scanner.nextToken(); // Skip 'if' token.
         
-            Descriptor desc = nextExpression();
+            RegisterDescriptor desc = nextExpression();
             check(desc, intType);
-            
+           
+            assembler.emit("beq", desc.getRegister(), allocator.zero, label);
+            allocator.release(desc.getRegister());
+
             nextExpected(boldThenToken);
             nextStatement();
-               
+
             if(scanner.getToken() == boldElseToken)
             {
                 scanner.nextToken(); // Skip 'else' token.
+
+                Label elseLabel = new Label("else");
+                assembler.emit("j", elseLabel);
+                assembler.emit(label);
+
                 if (scanner.getToken() != boldIfToken)
                 {
                     nextStatement();
+                    assembler.emit(elseLabel);
                     break;
                 }
+                assembler.emit(elseLabel);
             }
             else
             {
+                assembler.emit(label);
                 break;
             }
         }
+
+        
 
         exit("nextIf");  
     }
@@ -917,8 +966,11 @@ class Compiler extends Common
         enter("nextValue");
         
         scanner.nextToken(); // Skip 'value' token.
-        Descriptor desc = nextExpression();
+        RegisterDescriptor desc = nextExpression();
         check(desc, storedValueType);
+
+        assembler.emit("move", allocator.v0, desc.getRegister());
+        allocator.release(desc.getRegister());
         
         exit("nextValue");
     }
@@ -928,12 +980,22 @@ class Compiler extends Common
     {
         enter("nextWhile");
         
+        Label label = new Label("while");
+        Label endLabel = new Label("wend");
+        assembler.emit(label);
+
         scanner.nextToken(); // Skip 'while' token.
-        Descriptor desc = nextExpression();
+        RegisterDescriptor desc = nextExpression();
         check(desc, intType);
-        
+
+        assembler.emit("beq", desc.getRegister(), allocator.zero, endLabel);
+        allocator.release(desc.getRegister());
+
         nextExpected(boldDoToken);
         nextStatement();
+
+        assembler.emit("j", label);
+        assembler.emit(endLabel);
         
         exit("nextWhile");
     }
@@ -1219,7 +1281,7 @@ class Compiler extends Common
     // Run some test code.
     public static void main(String[] args)
     {
-        Compiler p = new Compiler("example.snarl");
+        Compiler p = new Compiler(args[0]);
     }
     
     // Checks if a token is in a set represented by a bitstring.

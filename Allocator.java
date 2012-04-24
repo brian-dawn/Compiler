@@ -97,14 +97,12 @@ public class Allocator
             System.out.println(allocator.request());
         
         //The s7 register.
-        Register r = allocator.request();
-        System.out.println(r);
-        
-        allocator.release(r);
-        System.out.println(allocator.request());
-        allocator.release(r);
-        //allocator.release(r); Uncomment this and get an exception.
-        allocator.request();
-        //allocator.request();
+        for (int i = 0; i< 10; i++)
+        {
+            Register r = allocator.request();
+            System.out.println(r);
+            
+            allocator.release(r);
+        }
     }
 }

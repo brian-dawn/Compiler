@@ -233,6 +233,7 @@ class Compiler extends Common
     // Parses the source file found at srcPath.
     public Compiler(String srcPath)
     {
+
         assembler = new Assembler("out.asm");
 
         source = new Source(srcPath, assembler);
@@ -253,6 +254,10 @@ class Compiler extends Common
         source = new Source(srcPath, assembler);
         scanner = new Scanner(source);
         symbolTable.setSource(source);
+
+        assembler.emit("main:");
+        Label main = ((GlobalDescriptor)symbolTable.getDescriptor("main")).getLabel();
+        assembler.emit("j", main);
 
         // Pass 2
         passTwo();
@@ -842,11 +847,12 @@ class Compiler extends Common
 
                         RegisterDescriptor expressionDesc = nextExpression();
                         check(expressionDesc, expressionDesc.getType());
-                        allocator.release(expressionDesc.getRegister());
+                        
 
                         Allocator.Register reg = desc.lvalue();
-                        assembler.emit("sw", expressionDesc.getRegister(), reg);
+                        assembler.emit("sw", expressionDesc.getRegister(), 0, reg);
                         allocator.release(reg);
+                        allocator.release(expressionDesc.getRegister());
 
                         break;
                     }
@@ -896,6 +902,7 @@ class Compiler extends Common
                 nextStatement();
             }
         }
+
         nextExpected(boldEndToken);
         
         exit("nextBegin");
@@ -906,9 +913,15 @@ class Compiler extends Common
     {
         enter("nextCode");
         
+
         scanner.nextToken(); // Skip code token.
+
+        String s = scanner.getString();
         nextExpected(stringConstantToken);
-        assembler.emit(scanner.getString());
+
+        assembler.emit(s);
+
+
         
         exit("nextCode");
     }

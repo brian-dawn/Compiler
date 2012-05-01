@@ -8,14 +8,14 @@
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
-
+import java.util.LinkedList;
 //  ASSEMBLER. Acts like an output stream that allows writing MIPS instructions
 //  to a text file.
 
 class Assembler
 {
   private static final int         labelWidth = 12;  //  Columns per LABEL.
-  private              PrintWriter writer;           //  Instructions go here.
+  private              WriterBuffer writer;           //  Instructions go here.
 
 //  Constructor. Open the file whose pathname is PATH so we can write assembler
 //  instructions to it.
@@ -24,7 +24,8 @@ class Assembler
   {
     try
     {
-      writer = new PrintWriter(new FileWriter(path));
+      PrintWriter pw = new PrintWriter(new FileWriter(path));
+      writer = new WriterBuffer(pw);
     }
     catch (IOException ignore)
     {
@@ -75,6 +76,51 @@ class Assembler
     }
   }
 
+  public void emitTop(String s)
+  {
+    place();
+    writer.printlnTop(s);
+  }
+
+  private class WriterBuffer
+  {
+    private LinkedList<String> buffer;
+    private LinkedList<String> top;
+    private PrintWriter pw;
+
+    public WriterBuffer(PrintWriter pw)
+    {
+      this.pw = pw;
+      this.buffer = new LinkedList<String>();
+      this.top = new LinkedList<String>();
+    }
+
+    public void print(String in)
+    {
+      buffer.add(in);
+    }
+    public void println()
+    {
+      buffer.add("\n");
+    }
+    public void printlnTop(String in)
+    {
+      top.add(in + "\n");
+    }
+    public void println(String in)
+    {
+      buffer.add(in + "\n");
+    }
+
+    public void close()
+    {
+      for(String s : top)
+        pw.print(s);
+      for(String s : buffer)
+        pw.print(s);
+      pw.close();
+    }
+  }
 //  EMIT. Write a MIPS instruction to WRITER. There are many ways to call EMIT,
 //  shown in the table below. OP is a STRING that is the name of an opcode or a
 //  pseudoinstruction. The L's are LABELs, the R's are REGISTERs, and IMM is an

@@ -57,7 +57,7 @@ class Global
     //Spit the globals out to the file targeted by the assembler.
     public void emit()
     {
-        assembler.emit(".data");
+        assembler.emitTop(".data");
 
         //Iterate through the labelMap retrieving both key and value.
         for (Map.Entry<String, Label> entry : labelMap.entrySet())
@@ -65,13 +65,15 @@ class Global
             String string = entry.getKey();
             Label label = entry.getValue();
 
-            assembler.emit(label + ": .asciiz \"" + string + "\"");
+            assembler.emitTop(label + ": .asciiz \"" + string + "\"");
         }
 
         for (int i = 0; i < labelVector.size(); i++)
         {
-            assembler.emit(labelVector.get(i) + ": .space " + sizeVector.get(i));
+            assembler.emitTop(labelVector.get(i) + ": .space " + sizeVector.get(i));
         }
+
+        assembler.emitTop(".text");
     }
 
     //Testing code.

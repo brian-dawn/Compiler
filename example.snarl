@@ -33,7 +33,10 @@ begin
  do begin
      writeInteger(index);
      writeString("   ");
+
      writeInteger(table[index]);
+     #writeInteger(factorial(index));
+     
      writeString("\n");
      index := index + 1
     end
@@ -46,7 +49,7 @@ begin
  code "li $v0, 1";
  code "lw $a0, 0($fp)";
  code "syscall";
- code "move $v0, 0($fp)"
+ code "move $v0, $fp"
 end;
 
 #  WRITE STRING. Write MESSAGE to standard output. Return MESSAGE.
@@ -56,5 +59,5 @@ begin
  code "li $v0, 4";
  code "lw $a0, 0($fp)";
  code "syscall";
- code "move $v0, 0($fp)"
+ code "move $v0, $fp"
 end

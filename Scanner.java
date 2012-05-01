@@ -360,7 +360,7 @@ class Scanner extends Common
     
     public static void main(String [] args)
     {
-        Source src = new Source(args[0]);
+        Source src = new Source(args[0], null);
         Scanner scan = new Scanner(src);
         
         while( scan.getToken() != Common.endFileToken )

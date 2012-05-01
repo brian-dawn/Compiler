@@ -102,33 +102,7 @@ class SymbolTable
     //Test the SymbolTable methods.
     public static void main(String[] args)
     {
-        SymbolTable st = new SymbolTable(new Source(args[0]));
-        
-        Type intType = new BasicType("int", Type.wordSize, null);
-        //NameDescriptor intDesc = new NameDescriptor(intType);
-        
-        st.push();
-        
-        //st.setDescriptor("global", intDesc);
-        
-        //Uncomment: Gives an already declared error.
-        //st.setDescriptor("global", intDesc); 
-        
-        System.out.println(st.isDeclared("global"));
-        
-        st.push();
-        //st.setDescriptor("local", intDesc);
-        
-        System.out.println(st.getDescriptor("local") != null);
-        
-        st.pop();
-        
-        //Uncomment: Gives a not declared error.
-        //System.out.println(st.getDescriptor("local") != null);
-        
-        System.out.println(st.isDeclared("local"));
-        
-        st.pop();
+
         
     }
     

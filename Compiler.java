@@ -253,10 +253,12 @@ class Compiler extends Common
         source = new Source(srcPath, assembler);
         scanner = new Scanner(source);
         symbolTable.setSource(source);
-        
+
         // Pass 2
         passTwo();
         
+        global.emit();
+        assembler.close();
         source.close();
     }
     
@@ -376,7 +378,6 @@ class Compiler extends Common
             source.error("End of program expected.");
         }
 
-        assembler.close();
         exit("nextProgram");
     }
     
